@@ -21,7 +21,10 @@ public class Project {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(updatable = false, nullable = false, columnDefinition = "SERIAL")
+    // This conflicts with Hibernate unless we do spring.jpa.properties.hibernate.id.new_generator_mappings=false
+    // @Column(updatable = false, nullable = false, columnDefinition = "SERIAL")
+    // using the modern approach
+    @Column(updatable = false, nullable = false)
     private Integer id;
 
     @Column(unique = true, nullable = false)
@@ -33,6 +36,8 @@ public class Project {
     @CreationTimestamp
     @Column(updatable = false, nullable = false)
     private ZonedDateTime createTime;
+
+    public Project(){}
 
     public Project(String name, String description){
         this.name = name;

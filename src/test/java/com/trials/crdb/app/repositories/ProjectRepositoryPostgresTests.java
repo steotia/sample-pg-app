@@ -1,8 +1,9 @@
 package com.trials.crdb.app.repositories;
 
+import java.util.HashMap;
 import java.util.Map;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -39,15 +40,16 @@ public class ProjectRepositoryPostgresTests {
     static class DataSourceInitializer implements ApplicationContextInitializer<ConfigurableApplicationContext> {
         @Override
         public void initialize(@NonNull ConfigurableApplicationContext appContext) {
-            Map<String, Object> properties = Map.of(
-                "spring.datasource.url",postgresContainer.getJdbcUrl(),
-                "spring.datasource.username",postgresContainer.getUsername(),
-                "spring.datasource.url",postgresContainer.getPassword(),
-                "spring.datasource.driver-class-name", "org.postgresql.Driver",
-                "spring.jpa.hibernate.ddl-auto", "create-drop",
-                "spring.jpa.properties.hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect",
-                "spring.jpa.show-sql", "true"
-            );
+            Map<String, Object> properties = new HashMap<>();
+            properties.put("spring.datasource.url", postgresContainer.getJdbcUrl());
+            properties.put("spring.datasource.username", postgresContainer.getUsername());
+            properties.put("spring.datasource.password", postgresContainer.getPassword());
+            properties.put("spring.datasource.driver-class-name", "org.postgresql.Driver");
+            properties.put("spring.jpa.hibernate.ddl-auto", "create");  // Try "create" instead of "create-drop"
+            properties.put("spring.jpa.properties.hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect");
+            properties.put("spring.jpa.show-sql", "true");
+            properties.put("spring.jpa.generate-ddl", "true");  // Add this line
+            
             appContext.getEnvironment().getPropertySources()
                 .addFirst(new MapPropertySource("testcontainers-postgresql", properties));
         }
