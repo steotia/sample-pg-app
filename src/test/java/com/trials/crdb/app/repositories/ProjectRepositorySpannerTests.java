@@ -16,7 +16,10 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.lang.NonNull;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.ContextConfiguration;
+import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.junit.jupiter.Container;
@@ -26,14 +29,11 @@ import com.trials.crdb.app.model.Project;
 
 import org.springframework.core.env.MapPropertySource;
 
-import org.testcontainers.containers.BindMode; 
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ContextConfiguration(initializers = ProjectRepositorySpannerTests.DataSourceInitializer.class)
 public class ProjectRepositorySpannerTests {
 
     private static final String PROJECT_ID = "emulator-project";
@@ -77,27 +77,23 @@ public class ProjectRepositorySpannerTests {
             )
             .withStartupTimeout(Duration.ofMinutes(2));
 
-    static class DataSourceInitializer implements ApplicationContextInitializer<ConfigurableApplicationContext> {
-        @Override
-        public void initialize(@NonNull ConfigurableApplicationContext appContext) {
-            // Get connection details from pgAdapter container
+    // Use DynamicPropertySource instead of ApplicationContextInitializer
+    @DynamicPropertySource
+    static void registerProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.datasource.url", () -> {
             String pgHost = pgAdapter.getHost();
             int pgPort = pgAdapter.getMappedPort(5432);
-            
-            // Configure database connection for test
-            Map<String, Object> properties = new HashMap<>();
-            properties.put("spring.datasource.driver-class-name", "org.postgresql.Driver");
-            properties.put("spring.datasource.url", 
-                String.format("jdbc:postgresql://%s:%d/%s", pgHost, pgPort, DATABASE_ID));
-            properties.put("spring.datasource.username", "postgres"); 
-            properties.put("spring.datasource.password", "");
-            properties.put("spring.jpa.hibernate.ddl-auto", "create-drop");
-            properties.put("spring.jpa.properties.hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect");
-            properties.put("spring.jpa.show-sql", "true");
-            
-            appContext.getEnvironment().getPropertySources()
-                .addFirst(new MapPropertySource("testcontainers-spanner", properties));
-        }
+            return String.format("jdbc:postgresql://%s:%d/%s", pgHost, pgPort, DATABASE_ID);
+        });
+        registry.add("spring.datasource.username", () -> "postgres");
+        registry.add("spring.datasource.password", () -> "");
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "create-drop");
+        registry.add("spring.datasource.hikari.connection-init-sql", 
+            () -> "SET spanner.support_drop_cascade=true");
+        registry.add("spring.jpa.properties.hibernate.dialect", 
+            () -> "org.hibernate.dialect.PostgreSQLDialect");
+        registry.add("spring.jpa.show-sql", () -> "true");
     }
 
     @Autowired
