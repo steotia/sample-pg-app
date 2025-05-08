@@ -24,6 +24,8 @@ import org.springframework.test.context.jdbc.SqlConfig;
 import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
+import org.testcontainers.containers.output.OutputFrame;
+import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -37,6 +39,10 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import org.junit.jupiter.api.BeforeEach;
+
+import org.testcontainers.containers.output.OutputFrame;
+import org.testcontainers.containers.output.Slf4jLogConsumer;
+import org.slf4j.LoggerFactory;
 
 @Testcontainers
 @DataJpaTest
@@ -61,6 +67,12 @@ public class ProjectRepositorySpannerTests {
     // Create a shared network for containers to communicate
     private static final Network NETWORK = Network.newNetwork();
 
+    private static final OutputFrame.OutputType[] OUTPUT_FRAME_TYPES = { 
+        OutputFrame.OutputType.STDOUT, 
+        OutputFrame.OutputType.STDERR 
+    };
+
+
     // Spanner emulator container
     @Container
     static final GenericContainer<?> spannerEmulator = 
@@ -68,6 +80,7 @@ public class ProjectRepositorySpannerTests {
             .withNetwork(NETWORK)
             .withNetworkAliases("spanner-emulator")
             .withExposedPorts(9010, 9020)
+            .withLogConsumer(new Slf4jLogConsumer(LoggerFactory.getLogger("spanner-emulator")))
             .withStartupTimeout(Duration.ofMinutes(2));
     
     // PGAdapter container with matched configuration
@@ -87,6 +100,7 @@ public class ProjectRepositorySpannerTests {
                 "-r", "autoConfigEmulator=true",
                 "-x"
             )
+            .withLogConsumer(new Slf4jLogConsumer(LoggerFactory.getLogger("pgadapter")))
             .withStartupTimeout(Duration.ofMinutes(2));
 
     // Use DynamicPropertySource instead of ApplicationContextInitializer
@@ -108,6 +122,8 @@ public class ProjectRepositorySpannerTests {
         registry.add("spring.jpa.properties.hibernate.dialect", 
             () -> "org.hibernate.dialect.PostgreSQLDialect");
         registry.add("spring.jpa.show-sql", () -> "true");
+        registry.add("logging.level.pgadapter", () -> "DEBUG");
+        registry.add("logging.level.spanner-emulator", () -> "DEBUG");
     }
 
     @Autowired
