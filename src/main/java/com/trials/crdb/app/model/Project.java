@@ -25,7 +25,9 @@ public class Project {
     // @Column(updatable = false, nullable = false, columnDefinition = "SERIAL")
     // using the modern approach
     @Column(updatable = false, nullable = false)
-    private Integer id;
+    // TOIL both
+    // even CRDB returns large values > INTEGER
+    private Long id;
 
     @Column(unique = true, nullable = false)
     private String name;

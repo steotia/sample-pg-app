@@ -66,7 +66,7 @@ public class ProjectRepositoryCockroachDBTests {
 
         assertThat(savedProject).isNotNull();
         assertThat(savedProject.getId()).isNotNull();
-        assertThat(savedProject.getId()).isGreaterThan(0);
+        assertThat(savedProject.getId()).isGreaterThan(0L);
         assertThat(savedProject.getName()).isEqualTo(projectName);
         assertThat(savedProject.getCreateTime()).isNotNull();
 
