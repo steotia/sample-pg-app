@@ -20,6 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 import com.trials.crdb.app.model.Project;
 
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -58,6 +59,17 @@ public class ProjectRepositoryCockroachDBTests {
     @Autowired
     private ProjectRepository projectRepository;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    private void printTableDDL(String tableName) {
+        String sql = "SHOW CREATE TABLE " + tableName;
+        String ddl = jdbcTemplate.queryForObject(sql, String.class);
+        System.out.println("\n---------- Table DDL for " + tableName + " ----------");
+        System.out.println(ddl);
+        System.out.println("---------------------------------------------------\n");
+    }
+
     @Test
     public void whenSaveProject_withValidName_thenProjectIsPersistedWithGeneratedIntegerId() {
         String projectName = "A CockroachDB project";
@@ -73,5 +85,7 @@ public class ProjectRepositoryCockroachDBTests {
         Project foundInDb = entityManager.find(Project.class, savedProject.getId());
         assertThat(foundInDb).isNotNull();
         assertThat(foundInDb.getName()).isEqualTo(projectName);
+
+        printTableDDL("projects");
     }
 }
