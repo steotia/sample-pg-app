@@ -3,6 +3,7 @@ package com.trials.crdb.app.repositories;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -20,15 +21,25 @@ import org.testcontainers.utility.DockerImageName;
 import com.trials.crdb.app.model.Project;
 
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 // import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import com.trials.crdb.app.utils.PostgresCompatibilityInspector;
 
 @Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ContextConfiguration(initializers = ProjectRepositoryPostgresTests.DataSourceInitializer.class)
 public class ProjectRepositoryPostgresTests {
+
+    private PostgresCompatibilityInspector schemaInspector;
+
+    @BeforeEach
+    void setUp() {
+        schemaInspector = new PostgresCompatibilityInspector(jdbcTemplate);
+    }
 
     @Container
     static final PostgreSQLContainer<?> postgresContainer = 
@@ -61,6 +72,10 @@ public class ProjectRepositoryPostgresTests {
     @Autowired
     private ProjectRepository projectRepository;
 
+   @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+
     @Test
     public void whenSaveProject_withValidName_thenProjectIsPersistedWithGeneratedIntegerId(){
         String projectName = "A SERIAL project";
@@ -76,6 +91,8 @@ public class ProjectRepositoryPostgresTests {
         Project foundInDb = entityManager.find(Project.class, savedProject.getId());
         assertThat(foundInDb).isNotNull();
         assertThat(foundInDb.getName()).isEqualTo(projectName);
+
+        schemaInspector.inspectTableSchema("projects");
 
     }
 

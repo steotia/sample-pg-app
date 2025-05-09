@@ -54,6 +54,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import com.trials.crdb.app.utils.PostgresCompatibilityInspector;
+
+
 @Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -67,11 +70,18 @@ public class ProjectRepositorySpannerTests {
     private static final String PROJECT_ID = "emulator-project";
     private static final String INSTANCE_ID = "test-instance";
     private static final String DATABASE_ID = "test-database";
+
+    private PostgresCompatibilityInspector schemaInspector;
     
     // Create empty credentials file for test
     @BeforeAll
     public static void setupCredentials() throws IOException {
         Files.writeString(Path.of("/tmp/empty-credentials.json"), "{}");
+    }
+
+    @BeforeEach
+    void setUp() {
+        schemaInspector = new PostgresCompatibilityInspector(jdbcTemplate);
     }
     
     // Create a shared network for containers to communicate
@@ -212,67 +222,6 @@ public class ProjectRepositorySpannerTests {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    // TOIL - doesn't work - SHOW CREATE TABLE
-    // private void printTableDDL(String tableName) {
-    //     String sql = "SHOW CREATE TABLE " + tableName;
-    //     String ddl = jdbcTemplate.queryForObject(sql, String.class);
-    //     System.out.println("\n---------- Table DDL for " + tableName + " ----------");
-    //     System.out.println(ddl);
-    //     System.out.println("---------------------------------------------------\n");
-    // }
-    // ALTERNATIVE 
-    // Add these methods for Spanner schema inspection
-    /**
-     * Print the table schema information using INFORMATION_SCHEMA queries
-     */
-    private void printSpannerTableSchema(String tableName) {
-        String sql = "SELECT " +
-                    "  COLUMN_NAME, " +
-                    "  SPANNER_TYPE, " +
-                    "  IS_NULLABLE, " +
-                    "  COLUMN_DEFAULT " +
-                    "FROM INFORMATION_SCHEMA.COLUMNS " +
-                    "WHERE TABLE_NAME = ? " +
-                    "ORDER BY ORDINAL_POSITION";
-                    
-        System.out.println("\n---------- Table Schema for " + tableName + " ----------");
-        List<Map<String, Object>> columns = jdbcTemplate.queryForList(sql, tableName);
-        for (Map<String, Object> column : columns) {
-            System.out.println("Column: " + column.get("COLUMN_NAME") + 
-                            ", Type: " + column.get("SPANNER_TYPE") + 
-                            ", Nullable: " + column.get("IS_NULLABLE") +
-                            ", Default: " + column.get("COLUMN_DEFAULT"));
-        }
-        
-        // Get primary key information
-        String pkSql = "SELECT " +
-                    "  COLUMN_NAME " +
-                    "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE " +
-                    "WHERE TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY_KEY' " +
-                    "ORDER BY ORDINAL_POSITION";
-        
-        // Fixed: Extract column names from the result map
-        List<Map<String, Object>> pkColumns = jdbcTemplate.queryForList(pkSql, tableName);
-        List<String> primaryKeys = new ArrayList<>();
-        for (Map<String, Object> row : pkColumns) {
-            primaryKeys.add(row.get("COLUMN_NAME").toString());
-        }
-        
-        System.out.println("Primary Key Columns: " + String.join(", ", primaryKeys));
-        System.out.println("---------------------------------------------------\n");
-    }
-
-    // Add a new test method
-    @Test
-    public void inspectProjectTableSchema() {
-        // Force schema creation by performing an operation
-        Project project = new Project("Schema Test", "Project for schema inspection");
-        projectRepository.save(project);
-        
-        // Print table schema details
-        printSpannerTableSchema("projects");
-    }
-
     @Test
     public void whenSaveProject_withValidName_thenProjectIsPersistedWithGeneratedIntegerId() {
         // The test remains the same
@@ -290,7 +239,6 @@ public class ProjectRepositorySpannerTests {
         assertThat(foundInDb).isNotNull();
         assertThat(foundInDb.getName()).isEqualTo(projectName);
 
-        // printTableDDL("projects");
-        printSpannerTableSchema("projects");
+        schemaInspector.inspectTableSchema("projects");
     }
 }

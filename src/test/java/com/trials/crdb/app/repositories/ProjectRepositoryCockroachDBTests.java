@@ -3,6 +3,7 @@ package com.trials.crdb.app.repositories;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -24,11 +25,20 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.trials.crdb.app.utils.PostgresCompatibilityInspector;
+
 @Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ContextConfiguration(initializers = ProjectRepositoryCockroachDBTests.DataSourceInitializer.class)
 public class ProjectRepositoryCockroachDBTests {
+
+    private PostgresCompatibilityInspector schemaInspector;
+
+    @BeforeEach
+    void setUp() {
+        schemaInspector = new PostgresCompatibilityInspector(jdbcTemplate);
+    }
 
     // CockroachDB container
     @Container
@@ -62,14 +72,6 @@ public class ProjectRepositoryCockroachDBTests {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private void printTableDDL(String tableName) {
-        String sql = "SHOW CREATE TABLE " + tableName;
-        String ddl = jdbcTemplate.queryForObject(sql, String.class);
-        System.out.println("\n---------- Table DDL for " + tableName + " ----------");
-        System.out.println(ddl);
-        System.out.println("---------------------------------------------------\n");
-    }
-
     @Test
     public void whenSaveProject_withValidName_thenProjectIsPersistedWithGeneratedIntegerId() {
         String projectName = "A CockroachDB project";
@@ -86,6 +88,6 @@ public class ProjectRepositoryCockroachDBTests {
         assertThat(foundInDb).isNotNull();
         assertThat(foundInDb.getName()).isEqualTo(projectName);
 
-        printTableDDL("projects");
+        schemaInspector.inspectTableSchema("projects");
     }
 }
