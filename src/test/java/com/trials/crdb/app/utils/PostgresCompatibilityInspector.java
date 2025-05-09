@@ -1,5 +1,6 @@
 package com.trials.crdb.app.utils;
 
+import org.aspectj.apache.bcel.classfile.Module.Uses;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.ArrayList;
@@ -140,8 +141,202 @@ public class PostgresCompatibilityInspector {
      * This will work in PostgreSQL and should work in any database that properly implements 
      * the SQL standard information_schema tables
      */
+    // private void printTableConstraints(String tableName) {
+    //     System.out.println("\n- Table Constraints (Using PostgreSQL compatibility):");
+        
+    //     try {
+    //         // Query for all constraints using information_schema
+    //         String sql = 
+    //             "SELECT tc.constraint_name, tc.constraint_type, kcu.column_name " +
+    //             "FROM information_schema.table_constraints tc " +
+    //             "JOIN information_schema.key_column_usage kcu " +
+    //             "  ON tc.constraint_name = kcu.constraint_name " +
+    //             "  AND tc.table_name = kcu.table_name " +
+    //             "WHERE tc.table_name = ? " +
+    //             "ORDER BY tc.constraint_type, tc.constraint_name, kcu.ordinal_position";
+            
+    //         List<Map<String, Object>> constraints = jdbcTemplate.queryForList(sql, tableName);
+            
+    //         if (constraints.isEmpty()) {
+    //             System.out.println("  No constraints found in information_schema");
+    //             return;
+    //         }
+            
+    //         // Group constraints by type and name for better readability
+    //         Map<String, Map<String, List<String>>> groupedConstraints = new HashMap<>();
+            
+    //         for (Map<String, Object> constraint : constraints) {
+    //             String type = (String) constraint.get("constraint_type");
+    //             String name = (String) constraint.get("constraint_name");
+    //             String column = (String) constraint.get("column_name");
+                
+    //             if (!groupedConstraints.containsKey(type)) {
+    //                 groupedConstraints.put(type, new HashMap<>());
+    //             }
+                
+    //             if (!groupedConstraints.get(type).containsKey(name)) {
+    //                 groupedConstraints.get(type).put(name, new ArrayList<>());
+    //             }
+                
+    //             groupedConstraints.get(type).get(name).add(column);
+    //         }
+            
+    //         // Print grouped constraints
+    //         for (String type : groupedConstraints.keySet()) {
+    //             System.out.println("  " + type + " Constraints:");
+    //             for (Map.Entry<String, List<String>> entry : groupedConstraints.get(type).entrySet()) {
+    //                 System.out.println("    - " + entry.getKey() + " (" + String.join(", ", entry.getValue()) + ")");
+    //             }
+    //         }
+            
+    //         // Special handling for UNIQUE constraints - they may be implemented as unique indexes
+    //         // in some databases, so we need an additional check
+    //         boolean hasUniqueConstraints = groupedConstraints.containsKey("UNIQUE");
+            
+    //         if (!hasUniqueConstraints) {
+    //             System.out.println("\n- Checking for UNIQUE indexes that might implement UNIQUE constraints:");
+                
+    //             // Detect database type for specific handling
+    //             // String dbType = detectDatabaseType();
+                
+    //             // System.out.println("==============> "+dbType);
+
+    //             if (databaseType == DatabaseType.SPANNER) {
+    //             // if (dbType.contains("Spanner")) {
+    //                 // Spanner-specific approach that works around array operation limitations
+    //                 try {
+    //                     // Modified pg_catalog query for Spanner that avoids array operations
+    //                     String spannerPgCatalogSql = 
+    //                         "SELECT idx.relname AS index_name, " +
+    //                         "       i.indisunique AS is_unique " +
+    //                         "FROM pg_index i " +
+    //                         "JOIN pg_class t ON i.indrelid = t.oid " +
+    //                         "JOIN pg_class idx ON i.indexrelid = idx.oid " +
+    //                         "WHERE t.relname = ? AND i.indisunique = true";
+                        
+    //                     List<Map<String, Object>> uniqueIndexes = jdbcTemplate.queryForList(spannerPgCatalogSql, tableName);
+                        
+    //                     if (!uniqueIndexes.isEmpty()) {
+    //                         System.out.println("  Found unique indexes in Spanner (using modified pg_catalog query):");
+    //                         for (Map<String, Object> idx : uniqueIndexes) {
+    //                             System.out.println("    - " + idx.get("index_name"));
+    //                         }
+    //                     } else {
+    //                         // If no results from simplified pg_catalog query, try information_schema directly
+    //                         String spannerInfoSchemaSql = 
+    //                             "SELECT index_name " +
+    //                             "FROM information_schema.indexes " +
+    //                             "WHERE table_name = ? AND is_unique = 'YES'";
+                            
+    //                         List<Map<String, Object>> infoSchemaIndexes = jdbcTemplate.queryForList(spannerInfoSchemaSql, tableName);
+                            
+    //                         if (!infoSchemaIndexes.isEmpty()) {
+    //                             System.out.println("  Found unique indexes in Spanner (using information_schema):");
+    //                             for (Map<String, Object> idx : infoSchemaIndexes) {
+    //                                 System.out.println("    - " + idx.get("index_name"));
+    //                             }
+    //                         } else {
+    //                             System.out.println("  No unique indexes found in Spanner");
+    //                         }
+    //                     }
+    //                 } catch (Exception e) {
+    //                     System.out.println(" ❌ Could not check for unique indexes in Spanner: " + e.getMessage());
+    //                     System.out.println("  Trying information_schema as fallback...");
+                        
+    //                     try {
+    //                         // Direct information_schema query as fallback
+    //                         String spannerInfoSchemaSql = 
+    //                             "SELECT index_name " +
+    //                             "FROM information_schema.indexes " +
+    //                             "WHERE table_name = ? AND is_unique = 'YES'";
+                            
+    //                         List<Map<String, Object>> infoSchemaIndexes = jdbcTemplate.queryForList(spannerInfoSchemaSql, tableName);
+                            
+    //                         if (!infoSchemaIndexes.isEmpty()) {
+    //                             System.out.println("  Found unique indexes in Spanner (using information_schema):");
+    //                             for (Map<String, Object> idx : infoSchemaIndexes) {
+    //                                 System.out.println("    - " + idx.get("index_name"));
+    //                             }
+    //                         } else {
+    //                             System.out.println("  No unique indexes found in Spanner");
+    //                         }
+    //                     } catch (Exception ex) {
+    //                         System.out.println("  Could not query Spanner information_schema: " + ex.getMessage());
+    //                     }
+    //                 }
+    //             } else {
+    //                 // Standard PostgreSQL approach for PostgreSQL and CockroachDB
+    //                 try {
+    //                     // This query works in PostgreSQL to find unique indexes
+    //                     String pgIndexSql = 
+    //                         "SELECT i.relname AS index_name, " +
+    //                         "       array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum)) AS columns, " +
+    //                         "       i.indisunique AS is_unique " +
+    //                         "FROM pg_index i " +
+    //                         "JOIN pg_class t ON i.indrelid = t.oid " +
+    //                         "JOIN pg_class idx ON i.indexrelid = idx.oid " +
+    //                         "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(i.indkey) " +
+    //                         "WHERE t.relname = ? AND i.indisunique = true " +
+    //                         "GROUP BY i.indexrelid, i.indisunique, i.indrelid, idx.relname, i.relname";
+                        
+    //                     List<Map<String, Object>> uniqueIndexes = jdbcTemplate.queryForList(pgIndexSql, tableName);
+                        
+    //                     if (uniqueIndexes.isEmpty()) {
+    //                         System.out.println("  No unique indexes found");
+    //                     } else {
+    //                         System.out.println("  Found unique indexes:");
+    //                         for (Map<String, Object> idx : uniqueIndexes) {
+    //                             System.out.println("    - " + idx.get("index_name") + " on columns: " + idx.get("columns"));
+    //                         }
+    //                     }
+    //                 } catch (Exception e) {
+    //                     System.out.println("  Could not check for unique indexes: " + e.getMessage());
+    //                     System.out.println("  This may indicate the database doesn't use PostgreSQL-compatible system catalogs");
+                        
+    //                     // Try using pg_indexes view as a fallback (works in more databases)
+    //                     try {
+    //                         String pgIndexesViewSql = 
+    //                             "SELECT indexname AS index_name, indexdef " +
+    //                             "FROM pg_indexes " +
+    //                             "WHERE tablename = ? " +
+    //                             "AND indexdef LIKE '%UNIQUE%'";
+                            
+    //                         List<Map<String, Object>> indexes = jdbcTemplate.queryForList(pgIndexesViewSql, tableName);
+    //                         if (!indexes.isEmpty()) {
+    //                             System.out.println("  Found unique indexes (using pg_indexes view):");
+    //                             for (Map<String, Object> idx : indexes) {
+    //                                 System.out.println("    - " + idx.get("index_name"));
+    //                                 System.out.println("      Definition: " + idx.get("indexdef"));
+    //                             }
+    //                         } else {
+    //                             System.out.println("  No unique indexes found using pg_indexes view");
+    //                         }
+    //                     } catch (Exception ex) {
+    //                         System.out.println("  Could not query pg_indexes view: " + ex.getMessage());
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     } catch (Exception e) {
+    //         System.out.println("  ❌ Error retrieving constraints: " + e.getMessage());
+    //         System.out.println("  This may indicate the database doesn't implement PostgreSQL-compatible information_schema");
+    //     }
+    // }
+
+    // This implementation:
+    // Uses standard information_schema queries for the initial constraint detection
+    // Tries three different approaches to find unique indexes in order of compatibility:
+    // First: pg_indexes view (works in PostgreSQL and CockroachDB)
+    // Second: Database-specific queries based on the type parameter
+    // Third: A fallback to information_schema.table_constraints
+    // Avoids problematic array operations entirely
+    // Provides detailed error reporting for debugging
+    /**
+     * Print constraints for a table using database-specific approach based on the provided type
+     */
     private void printTableConstraints(String tableName) {
         System.out.println("\n- Table Constraints (Using PostgreSQL compatibility):");
+        System.out.println("  Database type: " + databaseType);
         
         try {
             // Query for all constraints using information_schema
@@ -189,130 +384,100 @@ public class PostgresCompatibilityInspector {
             }
             
             // Special handling for UNIQUE constraints - they may be implemented as unique indexes
-            // in some databases, so we need an additional check
             boolean hasUniqueConstraints = groupedConstraints.containsKey("UNIQUE");
             
             if (!hasUniqueConstraints) {
                 System.out.println("\n- Checking for UNIQUE indexes that might implement UNIQUE constraints:");
                 
-                // Detect database type for specific handling
-                // String dbType = detectDatabaseType();
+                // First attempt: Use pg_indexes view (works in PostgreSQL and CockroachDB)
+                boolean foundIndexes = false;
                 
-                // System.out.println("==============> "+dbType);
-
-                if (databaseType == DatabaseType.SPANNER) {
-                // if (dbType.contains("Spanner")) {
-                    // Spanner-specific approach that works around array operation limitations
-                    try {
-                        // Modified pg_catalog query for Spanner that avoids array operations
-                        String spannerPgCatalogSql = 
-                            "SELECT idx.relname AS index_name, " +
-                            "       i.indisunique AS is_unique " +
-                            "FROM pg_index i " +
-                            "JOIN pg_class t ON i.indrelid = t.oid " +
-                            "JOIN pg_class idx ON i.indexrelid = idx.oid " +
-                            "WHERE t.relname = ? AND i.indisunique = true";
-                        
-                        List<Map<String, Object>> uniqueIndexes = jdbcTemplate.queryForList(spannerPgCatalogSql, tableName);
-                        
-                        if (!uniqueIndexes.isEmpty()) {
-                            System.out.println("  Found unique indexes in Spanner (using modified pg_catalog query):");
-                            for (Map<String, Object> idx : uniqueIndexes) {
-                                System.out.println("    - " + idx.get("index_name"));
-                            }
-                        } else {
-                            // If no results from simplified pg_catalog query, try information_schema directly
-                            String spannerInfoSchemaSql = 
-                                "SELECT index_name " +
-                                "FROM information_schema.indexes " +
-                                "WHERE table_name = ? AND is_unique = 'YES'";
-                            
-                            List<Map<String, Object>> infoSchemaIndexes = jdbcTemplate.queryForList(spannerInfoSchemaSql, tableName);
-                            
-                            if (!infoSchemaIndexes.isEmpty()) {
-                                System.out.println("  Found unique indexes in Spanner (using information_schema):");
-                                for (Map<String, Object> idx : infoSchemaIndexes) {
-                                    System.out.println("    - " + idx.get("index_name"));
-                                }
-                            } else {
-                                System.out.println("  No unique indexes found in Spanner");
-                            }
+                try {
+                    String pgIndexesViewSql = 
+                        "SELECT indexname AS index_name, indexdef " +
+                        "FROM pg_indexes " +
+                        "WHERE tablename = ? " +
+                        "AND indexdef LIKE '%UNIQUE%'";
+                    
+                    List<Map<String, Object>> indexes = jdbcTemplate.queryForList(pgIndexesViewSql, tableName);
+                    if (!indexes.isEmpty()) {
+                        System.out.println("  Found unique indexes (using pg_indexes view):");
+                        for (Map<String, Object> idx : indexes) {
+                            System.out.println("    - " + idx.get("index_name"));
+                            System.out.println("      Definition: " + idx.get("indexdef"));
                         }
-                    } catch (Exception e) {
-                        System.out.println(" ❌ Could not check for unique indexes in Spanner: " + e.getMessage());
-                        System.out.println("  Trying information_schema as fallback...");
-                        
+                        foundIndexes = true;
+                    } 
+                } catch (Exception e) {
+                    System.out.println("  Could not query pg_indexes view: " + e.getMessage());
+                }
+                
+                // Second attempt: Database-specific queries if needed
+                if (!foundIndexes) {
+                    if (databaseType == DatabaseType.SPANNER) {
                         try {
-                            // Direct information_schema query as fallback
-                            String spannerInfoSchemaSql = 
+                            // Spanner-specific information_schema query
+                            String spannerIndexSql = 
                                 "SELECT index_name " +
                                 "FROM information_schema.indexes " +
                                 "WHERE table_name = ? AND is_unique = 'YES'";
                             
-                            List<Map<String, Object>> infoSchemaIndexes = jdbcTemplate.queryForList(spannerInfoSchemaSql, tableName);
-                            
-                            if (!infoSchemaIndexes.isEmpty()) {
-                                System.out.println("  Found unique indexes in Spanner (using information_schema):");
-                                for (Map<String, Object> idx : infoSchemaIndexes) {
+                            List<Map<String, Object>> spannerIndexes = jdbcTemplate.queryForList(spannerIndexSql, tableName);
+                            if (!spannerIndexes.isEmpty()) {
+                                System.out.println("  Found unique indexes in Spanner:");
+                                for (Map<String, Object> idx : spannerIndexes) {
                                     System.out.println("    - " + idx.get("index_name"));
                                 }
-                            } else {
-                                System.out.println("  No unique indexes found in Spanner");
+                                foundIndexes = true;
                             }
-                        } catch (Exception ex) {
-                            System.out.println("  Could not query Spanner information_schema: " + ex.getMessage());
+                        } catch (Exception e) {
+                            System.out.println("  Could not query Spanner indexes: " + e.getMessage());
+                        }
+                    } else {
+                        try {
+                            // Simplified system catalog query for PostgreSQL/CockroachDB
+                            // Avoid problematic array operations
+                            String simplePgIndexSql = 
+                                "SELECT idx.relname AS index_name " +
+                                "FROM pg_index i " +
+                                "JOIN pg_class t ON i.indrelid = t.oid " +
+                                "JOIN pg_class idx ON i.indexrelid = idx.oid " +
+                                "WHERE t.relname = ? AND i.indisunique = true";
+                            
+                            List<Map<String, Object>> pgIndexes = jdbcTemplate.queryForList(simplePgIndexSql, tableName);
+                            if (!pgIndexes.isEmpty()) {
+                                System.out.println("  Found unique indexes (using simplified pg_catalog query):");
+                                for (Map<String, Object> idx : pgIndexes) {
+                                    System.out.println("    - " + idx.get("index_name"));
+                                }
+                                foundIndexes = true;
+                            }
+                        } catch (Exception e) {
+                            System.out.println("  Could not query pg_index: " + e.getMessage());
                         }
                     }
-                } else {
-                    // Standard PostgreSQL approach for PostgreSQL and CockroachDB
+                }
+                
+                // Third attempt: Last resort - try information_schema.table_constraints for all databases
+                if (!foundIndexes) {
                     try {
-                        // This query works in PostgreSQL to find unique indexes
-                        String pgIndexSql = 
-                            "SELECT i.relname AS index_name, " +
-                            "       array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum)) AS columns, " +
-                            "       i.indisunique AS is_unique " +
-                            "FROM pg_index i " +
-                            "JOIN pg_class t ON i.indrelid = t.oid " +
-                            "JOIN pg_class idx ON i.indexrelid = idx.oid " +
-                            "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(i.indkey) " +
-                            "WHERE t.relname = ? AND i.indisunique = true " +
-                            "GROUP BY i.indexrelid, i.indisunique, i.indrelid, idx.relname, i.relname";
+                        String infoSchemaIndexSql = 
+                            "SELECT constraint_name AS index_name " +
+                            "FROM information_schema.table_constraints " +
+                            "WHERE table_name = ? AND constraint_type = 'UNIQUE'";
                         
-                        List<Map<String, Object>> uniqueIndexes = jdbcTemplate.queryForList(pgIndexSql, tableName);
-                        
-                        if (uniqueIndexes.isEmpty()) {
-                            System.out.println("  No unique indexes found");
+                        List<Map<String, Object>> constraints2 = jdbcTemplate.queryForList(infoSchemaIndexSql, tableName);
+                        if (!constraints2.isEmpty()) {
+                            System.out.println("  Found unique constraints (using information_schema):");
+                            for (Map<String, Object> c : constraints2) {
+                                System.out.println("    - " + c.get("index_name"));
+                            }
                         } else {
-                            System.out.println("  Found unique indexes:");
-                            for (Map<String, Object> idx : uniqueIndexes) {
-                                System.out.println("    - " + idx.get("index_name") + " on columns: " + idx.get("columns"));
-                            }
+                            System.out.println("  No unique constraints found using any method");
                         }
-                    } catch (Exception e) {
-                        System.out.println("  Could not check for unique indexes: " + e.getMessage());
-                        System.out.println("  This may indicate the database doesn't use PostgreSQL-compatible system catalogs");
-                        
-                        // Try using pg_indexes view as a fallback (works in more databases)
-                        try {
-                            String pgIndexesViewSql = 
-                                "SELECT indexname AS index_name, indexdef " +
-                                "FROM pg_indexes " +
-                                "WHERE tablename = ? " +
-                                "AND indexdef LIKE '%UNIQUE%'";
-                            
-                            List<Map<String, Object>> indexes = jdbcTemplate.queryForList(pgIndexesViewSql, tableName);
-                            if (!indexes.isEmpty()) {
-                                System.out.println("  Found unique indexes (using pg_indexes view):");
-                                for (Map<String, Object> idx : indexes) {
-                                    System.out.println("    - " + idx.get("index_name"));
-                                    System.out.println("      Definition: " + idx.get("indexdef"));
-                                }
-                            } else {
-                                System.out.println("  No unique indexes found using pg_indexes view");
-                            }
-                        } catch (Exception ex) {
-                            System.out.println("  Could not query pg_indexes view: " + ex.getMessage());
-                        }
+                    } catch (Exception ex) {
+                        System.out.println("  Could not query information_schema: " + ex.getMessage());
+                        System.out.println("  No unique indexes or constraints found");
                     }
                 }
             }
