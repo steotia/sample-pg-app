@@ -100,7 +100,7 @@ public class ProjectRepositorySpannerTests {
             .withNetwork(NETWORK)
             .withNetworkAliases("spanner-emulator")
             .withExposedPorts(9010, 9020)
-            .withLogConsumer(new Slf4jLogConsumer(LoggerFactory.getLogger("spanner-emulator")))
+            // .withLogConsumer(new Slf4jLogConsumer(LoggerFactory.getLogger("spanner-emulator")))
             .withStartupTimeout(Duration.ofMinutes(2));
     
     // PGAdapter container with matched configuration
@@ -120,7 +120,7 @@ public class ProjectRepositorySpannerTests {
                 "-r", "autoConfigEmulator=true",
                 "-x"
             )
-            .withLogConsumer(new Slf4jLogConsumer(LoggerFactory.getLogger("pgadapter")))
+            // .withLogConsumer(new Slf4jLogConsumer(LoggerFactory.getLogger("pgadapter")))
             .withStartupTimeout(Duration.ofMinutes(2));
 
     // Use DynamicPropertySource instead of ApplicationContextInitializer
@@ -142,8 +142,8 @@ public class ProjectRepositorySpannerTests {
         registry.add("spring.jpa.properties.hibernate.dialect", 
             () -> "org.hibernate.dialect.PostgreSQLDialect");
         registry.add("spring.jpa.show-sql", () -> "true");
-        registry.add("logging.level.pgadapter", () -> "DEBUG");
-        registry.add("logging.level.spanner-emulator", () -> "DEBUG");
+        // registry.add("logging.level.pgadapter", () -> "DEBUG");
+        // registry.add("logging.level.spanner-emulator", () -> "DEBUG");
     }
 
     @Autowired
