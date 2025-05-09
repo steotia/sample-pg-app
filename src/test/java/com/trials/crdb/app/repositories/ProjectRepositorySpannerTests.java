@@ -81,7 +81,9 @@ public class ProjectRepositorySpannerTests {
 
     @BeforeEach
     void setUp() {
-        schemaInspector = new PostgresCompatibilityInspector(jdbcTemplate);
+        schemaInspector = new PostgresCompatibilityInspector(
+            jdbcTemplate, 
+            PostgresCompatibilityInspector.DatabaseType.SPANNER);
     }
     
     // Create a shared network for containers to communicate

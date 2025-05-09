@@ -38,7 +38,9 @@ public class ProjectRepositoryPostgresTests {
 
     @BeforeEach
     void setUp() {
-        schemaInspector = new PostgresCompatibilityInspector(jdbcTemplate);
+        schemaInspector = new PostgresCompatibilityInspector(
+            jdbcTemplate, 
+            PostgresCompatibilityInspector.DatabaseType.SPANNER);
     }
 
     @Container
