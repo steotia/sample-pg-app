@@ -1,6 +1,9 @@
 package com.trials.crdb.app.utils;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -14,6 +17,99 @@ public class PostgresCompatibilityInspector {
 
     public PostgresCompatibilityInspector(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /**
+     * Print constraints for a table using only PostgreSQL-compatible information_schema queries
+     * This will work in PostgreSQL and should work in any database that properly implements 
+     * the SQL standard information_schema tables
+     */
+    private void printTableConstraints(String tableName) {
+        System.out.println("\n- Table Constraints (Using PostgreSQL compatibility):");
+        
+        try {
+            // Query for all constraints using information_schema
+            String sql = 
+                "SELECT tc.constraint_name, tc.constraint_type, kcu.column_name " +
+                "FROM information_schema.table_constraints tc " +
+                "JOIN information_schema.key_column_usage kcu " +
+                "  ON tc.constraint_name = kcu.constraint_name " +
+                "  AND tc.table_name = kcu.table_name " +
+                "WHERE tc.table_name = ? " +
+                "ORDER BY tc.constraint_type, tc.constraint_name, kcu.ordinal_position";
+            
+            List<Map<String, Object>> constraints = jdbcTemplate.queryForList(sql, tableName);
+            
+            if (constraints.isEmpty()) {
+                System.out.println("  No constraints found in information_schema");
+                return;
+            }
+            
+            // Group constraints by type and name for better readability
+            Map<String, Map<String, List<String>>> groupedConstraints = new HashMap<>();
+            
+            for (Map<String, Object> constraint : constraints) {
+                String type = (String) constraint.get("constraint_type");
+                String name = (String) constraint.get("constraint_name");
+                String column = (String) constraint.get("column_name");
+                
+                if (!groupedConstraints.containsKey(type)) {
+                    groupedConstraints.put(type, new HashMap<>());
+                }
+                
+                if (!groupedConstraints.get(type).containsKey(name)) {
+                    groupedConstraints.get(type).put(name, new ArrayList<>());
+                }
+                
+                groupedConstraints.get(type).get(name).add(column);
+            }
+            
+            // Print grouped constraints
+            for (String type : groupedConstraints.keySet()) {
+                System.out.println("  " + type + " Constraints:");
+                for (Map.Entry<String, List<String>> entry : groupedConstraints.get(type).entrySet()) {
+                    System.out.println("    - " + entry.getKey() + " (" + String.join(", ", entry.getValue()) + ")");
+                }
+            }
+            
+            // Special handling for UNIQUE constraints - they may be implemented as unique indexes
+            // in some databases, so we need an additional check
+            boolean hasUniqueConstraints = groupedConstraints.containsKey("UNIQUE");
+            
+            if (!hasUniqueConstraints) {
+                System.out.println("\n- Checking for UNIQUE indexes that might implement UNIQUE constraints:");
+                try {
+                    // This query works in PostgreSQL to find unique indexes
+                    String indexSql = 
+                        "SELECT i.relname AS index_name, " +
+                        "       array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum)) AS columns, " +
+                        "       i.indisunique AS is_unique " +
+                        "FROM pg_index i " +
+                        "JOIN pg_class t ON i.indrelid = t.oid " +
+                        "JOIN pg_class idx ON i.indexrelid = idx.oid " +
+                        "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(i.indkey) " +
+                        "WHERE t.relname = ? AND i.indisunique = true " +
+                        "GROUP BY i.indexrelid, i.indisunique, i.indrelid, idx.relname, i.relname";
+                    
+                    List<Map<String, Object>> uniqueIndexes = jdbcTemplate.queryForList(indexSql, tableName);
+                    
+                    if (uniqueIndexes.isEmpty()) {
+                        System.out.println("  No unique indexes found");
+                    } else {
+                        System.out.println("  Found unique indexes:");
+                        for (Map<String, Object> idx : uniqueIndexes) {
+                            System.out.println("    - " + idx.get("index_name") + " on columns: " + idx.get("columns"));
+                        }
+                    }
+                } catch (Exception e) {
+                    System.out.println("  Could not check for unique indexes: " + e.getMessage());
+                    System.out.println("  This may indicate the database doesn't use PostgreSQL-compatible system catalogs");
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("  ❌ Error retrieving constraints: " + e.getMessage());
+            System.out.println("  This may indicate the database doesn't implement PostgreSQL-compatible information_schema");
+        }
     }
 
     /**
@@ -32,6 +128,9 @@ public class PostgresCompatibilityInspector {
             
             // Get primary key information - standard PostgreSQL information_schema query
             printPrimaryKeyInfo(tableName);
+
+            // Get constraint information including UNIQUE constraints
+            printTableConstraints(tableName);
             
             // Try to get identity column info - PostgreSQL approach
             printIdentityColumnInfo(tableName);
