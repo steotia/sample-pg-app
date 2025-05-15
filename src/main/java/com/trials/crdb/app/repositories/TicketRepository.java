@@ -30,6 +30,14 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     @Query("SELECT t FROM Ticket t WHERE t.title LIKE %:keyword% OR t.description LIKE %:keyword%")
     List<Ticket> findByKeyword(@Param("keyword") String keyword);
     
+    // TOIL
+    // Spanner-compatible alternative - avoiding JPQL and using nativeQuery = true
+    @Query(value = "SELECT * FROM tickets WHERE " +
+                "title LIKE '%' || :keyword || '%' OR " +
+                "description LIKE '%' || :keyword || '%'", 
+        nativeQuery = true)
+    List<Ticket> findByKeywordForSpanner(@Param("keyword") String keyword);
+
     // JSONB queries - using native queries for each database
     
     // PostgreSQL JSONB query
