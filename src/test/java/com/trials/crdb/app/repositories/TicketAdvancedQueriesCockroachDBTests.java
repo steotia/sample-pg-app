@@ -22,6 +22,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import com.trials.crdb.app.model.*;
+import com.trials.crdb.app.model.Ticket.TicketPriority;
+import com.trials.crdb.app.model.Ticket.TicketStatus;
 import com.trials.crdb.app.utils.PostgresCompatibilityInspector;
 
 import org.springframework.core.env.MapPropertySource;
@@ -246,10 +248,10 @@ public class TicketAdvancedQueriesCockroachDBTests {
     //-------------------------------------------------------------------------
     // SECTION 3: TEXT SEARCH TESTS 
     //-------------------------------------------------------------------------
-    
+
     @Test
     public void testFindByKeyword() {
-        // Test text search across title and description
+        // Test basic text search
         List<Ticket> apiTickets = ticketRepository.findByKeyword("API");
         assertThat(apiTickets).hasSize(1);
         assertThat(apiTickets.get(0).getTitle()).isEqualTo("API Integration");
@@ -258,21 +260,74 @@ public class TicketAdvancedQueriesCockroachDBTests {
         assertThat(mobileTickets).hasSize(1);
         assertThat(mobileTickets.get(0).getTitle()).isEqualTo("Mobile Navigation");
     }
-    
-    // Add a custom query method to TicketRepository:
-    // @Query("SELECT t FROM Ticket t WHERE LOWER(t.title) LIKE LOWER(CONCAT('%', :keyword, '%')) OR LOWER(t.description) LIKE LOWER(CONCAT('%', :keyword, '%'))")
-    // List<Ticket> findByKeywordCaseInsensitive(@Param("keyword") String keyword);
-    
-    /*
+
     @Test
     public void testFindByKeywordCaseInsensitive() {
-        // Test case-insensitive search (add this method to repository first)
-        List<Ticket> implementTickets = ticketRepository.findByKeywordCaseInsensitive("implement");
-        assertThat(implementTickets).hasSize(2);
-        assertThat(implementTickets).extracting("title")
+        // Test case-insensitive search using PostgreSQL ILIKE
+        List<Ticket> apiTickets = ticketRepository.findByKeywordCaseInsensitive("api");
+        assertThat(apiTickets).hasSize(1);
+        assertThat(apiTickets.get(0).getTitle()).isEqualTo("API Integration");
+        
+        List<Ticket> mobileTickets = ticketRepository.findByKeywordCaseInsensitive("MOBILE");
+        assertThat(mobileTickets).hasSize(1);
+        assertThat(mobileTickets.get(0).getTitle()).isEqualTo("Mobile Navigation");
+    }
+
+    @Test
+    public void testFindByMultipleKeywords() {
+        // Test searching with multiple keywords using PostgreSQL ARRAY and ALL construct
+        List<Ticket> tickets = ticketRepository.findByMultipleKeywords("mobile", "navigation");
+        assertThat(tickets).hasSize(1);
+        assertThat(tickets.get(0).getTitle()).isEqualTo("Mobile Navigation");
+        
+        // Test with keywords that won't match together
+        List<Ticket> noMatches = ticketRepository.findByMultipleKeywords("mobile", "payment");
+        assertThat(noMatches).isEmpty();
+    }
+
+    @Test
+    public void testFindByPrefix() {
+        // Test prefix search with PostgreSQL ILIKE
+        List<Ticket> tickets = ticketRepository.findByPrefix("datab");
+        assertThat(tickets).hasSize(1);
+        assertThat(tickets.get(0).getTitle()).isEqualTo("Database Optimization");
+        
+        // Test case-insensitive prefix
+        List<Ticket> implTickets = ticketRepository.findByPrefix("impl");
+        assertThat(implTickets).hasSize(2);
+        assertThat(implTickets).extracting("title")
             .containsExactlyInAnyOrder("Mobile Navigation", "User Authentication");
     }
-    */
+
+    @Test
+    public void testFindByKeywordAcrossFields() {
+        // Test searching across multiple fields including enum values
+        List<Ticket> highTickets = ticketRepository.findByKeywordAcrossFields("high");
+        assertThat(highTickets).hasSize(2);
+        assertThat(highTickets).extracting("title")
+            .containsExactlyInAnyOrder("Homepage Layout", "User Authentication");
+        
+        // Search for status values
+        List<Ticket> openTickets = ticketRepository.findByKeywordAcrossFields("open");
+        assertThat(openTickets).hasSize(2);
+    }
+
+    @Test
+    public void testAdvancedSearch() {
+        // Test searching with multiple criteria
+        List<Ticket> tickets = ticketRepository.findByAdvancedCriteria("api", null, TicketStatus.OPEN, null);
+        assertThat(tickets).hasSize(1);
+        assertThat(tickets.get(0).getTitle()).isEqualTo("API Integration");
+        
+        // Test search with only priority
+        List<Ticket> highTickets = ticketRepository.findByAdvancedCriteria(null, null, null, TicketPriority.HIGH);
+        assertThat(highTickets).hasSize(2);
+        
+        // Test search with multiple criteria
+        List<Ticket> complexTickets = ticketRepository.findByAdvancedCriteria(null, "implement", null, TicketPriority.HIGH);
+        assertThat(complexTickets).hasSize(1);
+        assertThat(complexTickets.get(0).getTitle()).isEqualTo("User Authentication");
+    }
 
     //-------------------------------------------------------------------------
     // SECTION 4: JSON/JSONB QUERY TESTS
