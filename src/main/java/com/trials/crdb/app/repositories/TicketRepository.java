@@ -174,6 +174,13 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?1, CAST(?2 AS JSONB))", nativeQuery = true)
     List<Ticket> findByMetadataContaining(String key, String value);
 
+    // TOIL 
+    // CAST(?2 AS JSONB) is not working
+    // @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?1, CAST(?2 AS JSONB))", nativeQuery = true)
+    // @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?1, to_jsonb(?2))", nativeQuery = true)
+    @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?, ?::text)", nativeQuery = true)
+    List<Ticket> findByMetadataContainingForSpanner(String key, String value);
+
     // TOIL
     // Also this is sub-optimal
     // Spanner-compatible array containment check using JSON_EXTRACT_ARRAY
@@ -181,6 +188,11 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     // json_extract_array does not exist
     // @Query(value = "SELECT * FROM tickets WHERE EXISTS(SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(metadata, '$.tags')) AS tag WHERE tag = ?1)", nativeQuery = true)
     // List<Ticket> findByTagSpanner(@Param("tag1") String tag); 
-    @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(t.metadata, '$.tags')) AS json_tag WHERE JSON_VALUE(json_tag, '$') = ?1)", nativeQuery = true)
+    // TOIL 
+    // JSON_EXTRACT_ARRAY does not exist
+    // @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(t.metadata, '$.tags')) AS json_tag WHERE JSON_VALUE(json_tag, '$') = ?1)", nativeQuery = true)
+    // TOIL JSON_QUERY does not exist
+    // @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM UNNEST(JSON_QUERY(t.metadata, '$.tags')) AS tag WHERE JSON_VALUE(tag, '$') = ?1)", nativeQuery = true)
+    @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(t.metadata->'tags') tag WHERE tag::text = ?1)", nativeQuery = true)
     List<Ticket> findByTagSpanner(@Param("tag") String tag);
 }

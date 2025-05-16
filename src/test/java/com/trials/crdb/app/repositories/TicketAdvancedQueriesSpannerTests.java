@@ -491,7 +491,7 @@ public class TicketAdvancedQueriesSpannerTests {
         }
 
         // Test JSON containment operator
-        List<Ticket> tickets = ticketRepository.findByMetadataContaining("component", "\"frontend\"");
+        List<Ticket> tickets = ticketRepository.findByMetadataContainingForSpanner("component", "\"frontend\"");
         assertThat(tickets).hasSize(2);
         assertThat(tickets).extracting("title")
             .containsExactlyInAnyOrder("Homepage Layout", "Mobile Navigation");
