@@ -173,4 +173,14 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     // Containment using JSON function without problematic parameter casts
     @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?1, CAST(?2 AS JSONB))", nativeQuery = true)
     List<Ticket> findByMetadataContaining(String key, String value);
+
+    // TOIL
+    // Also this is sub-optimal
+    // Spanner-compatible array containment check using JSON_EXTRACT_ARRAY
+    // TOIL
+    // json_extract_array does not exist
+    // @Query(value = "SELECT * FROM tickets WHERE EXISTS(SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(metadata, '$.tags')) AS tag WHERE tag = ?1)", nativeQuery = true)
+    // List<Ticket> findByTagSpanner(@Param("tag1") String tag); 
+    @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(t.metadata, '$.tags')) AS json_tag WHERE JSON_VALUE(json_tag, '$') = ?1)", nativeQuery = true)
+    List<Ticket> findByTagSpanner(@Param("tag") String tag);
 }
