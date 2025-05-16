@@ -1,17 +1,17 @@
 package com.trials.crdb.app.repositories;
 
+import java.util.List;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import com.trials.crdb.app.model.Project;
 import com.trials.crdb.app.model.Ticket;
 import com.trials.crdb.app.model.Ticket.TicketPriority;
 import com.trials.crdb.app.model.Ticket.TicketStatus;
 import com.trials.crdb.app.model.User;
-import com.trials.crdb.app.model.Project;
-
-import java.util.List;
 
 @Repository
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
@@ -39,12 +39,6 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
                 "description LIKE '%' || :keyword || '%'", 
         nativeQuery = true)
     List<Ticket> findByKeywordForSpanner(@Param("keyword") String keyword);
-
-    // JSONB queries - using native queries for each database
-    
-    // PostgreSQL JSONB query
-    @Query(value = "SELECT * FROM tickets WHERE metadata ->> :key = :value", nativeQuery = true)
-    List<Ticket> findByMetadataKeyValue(@Param("key") String key, @Param("value") String value);
     
     // Query for tickets without an assignee
     List<Ticket> findByAssigneeIsNull();
@@ -144,4 +138,39 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
         nativeQuery = true)
     List<Ticket> findByKeywordAcrossFieldsSpanner(@Param("keyword") String keyword);
 
+    // Basic JSON key-value query (existing method)
+    @Query(value = "SELECT * FROM tickets WHERE metadata ->> :key = :value", nativeQuery = true)
+    List<Ticket> findByMetadataKeyValue(@Param("key") String key, @Param("value") String value);
+
+    // Query by numeric JSON value with comparison
+    @Query(value = "SELECT * FROM tickets WHERE (metadata->>'complexity')::int > :value", nativeQuery = true)
+    List<Ticket> findByComplexityGreaterThan(@Param("value") int value);
+
+    // Query for tickets with a specific tag in the tags array
+    // TOIL array containment ? operator did not work
+    // @Query(value = "SELECT * FROM tickets WHERE metadata->'tags' ? :tag", nativeQuery = true)
+    @Query(value = "SELECT * FROM tickets WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(metadata->'tags') tag WHERE tag = ?1)", nativeQuery = true)
+    List<Ticket> findByTag(@Param("tag") String tag);
+
+    // Query for tickets with multiple specific keys in metadata
+    // trying to avoid array containment ? operator
+    // @Query(value = "SELECT * FROM tickets WHERE metadata ? :key1 AND metadata ? :key2", nativeQuery = true)
+    // TOIL below didnt work
+    // @Query(value = "SELECT * FROM tickets WHERE " +
+    //            "metadata ?? ?1 AND metadata ?? ?2", nativeQuery = true)
+    // Check if keys exist using the ->> operator (returns NULL if key doesn't exist)
+    @Query(value = "SELECT * FROM tickets WHERE " +
+               "metadata->>?1 IS NOT NULL AND metadata->>?2 IS NOT NULL", nativeQuery = true)
+    List<Ticket> findByMetadataContainingKeys(@Param("key1") String key1, @Param("key2") String key2);
+
+    @Query(value = "SELECT id, metadata->>?1 AS value FROM tickets", nativeQuery = true)
+    List<Object[]> dumpMetadataValues(String key);
+
+    // Query for tickets with metadata containing a JSON object with specific key-value
+    // Below is not working
+    // @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(:key, :value::jsonb)", nativeQuery = true)
+    // List<Ticket> findByMetadataContaining(@Param("key") String key, @Param("value") String value);
+    // Containment using JSON function without problematic parameter casts
+    @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?1, CAST(?2 AS JSONB))", nativeQuery = true)
+    List<Ticket> findByMetadataContaining(String key, String value);
 }
