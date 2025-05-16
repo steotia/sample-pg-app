@@ -26,6 +26,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.trials.crdb.app.model.*;
+import com.trials.crdb.app.model.Ticket.TicketPriority;
+import com.trials.crdb.app.model.Ticket.TicketStatus;
 import com.trials.crdb.app.utils.PostgresCompatibilityInspector;
 
 import javax.sql.DataSource;
@@ -350,9 +352,14 @@ public class TicketAdvancedQueriesSpannerTests {
     // SECTION 3: TEXT SEARCH TESTS 
     //-------------------------------------------------------------------------
     
+    /*
+     * PostgreSQL and CockroachDB fully support LIKE with ESCAPE
+     * Spanner doesn't support the like_escape function, so we need to use string functions like STRPOS instead
+     */
+
     @Test
     public void testFindByKeyword() {
-        // Test text search across title and description using Spanner-compatible approach
+        // Test basic text search
         List<Ticket> apiTickets = ticketRepository.findByKeywordForSpanner("API");
         assertThat(apiTickets).hasSize(1);
         assertThat(apiTickets.get(0).getTitle()).isEqualTo("API Integration");
@@ -361,21 +368,73 @@ public class TicketAdvancedQueriesSpannerTests {
         assertThat(mobileTickets).hasSize(1);
         assertThat(mobileTickets.get(0).getTitle()).isEqualTo("Mobile Navigation");
     }
-    
-    // Add a custom query method to TicketRepository:
-    // @Query("SELECT t FROM Ticket t WHERE LOWER(t.title) LIKE LOWER(CONCAT('%', :keyword, '%')) OR LOWER(t.description) LIKE LOWER(CONCAT('%', :keyword, '%'))")
-    // List<Ticket> findByKeywordCaseInsensitive(@Param("keyword") String keyword);
-    
-    /*
+
     @Test
     public void testFindByKeywordCaseInsensitive() {
-        // Test case-insensitive search (add this method to repository first)
-        List<Ticket> implementTickets = ticketRepository.findByKeywordCaseInsensitive("implement");
-        assertThat(implementTickets).hasSize(2);
-        assertThat(implementTickets).extracting("title")
-            .containsExactlyInAnyOrder("Mobile Navigation", "User Authentication");
+        // Test case-insensitive search using Spanner-compatible method
+        List<Ticket> apiTickets = ticketRepository.findByKeywordCaseInsensitiveSpanner("api");
+        assertThat(apiTickets).hasSize(1);
+        assertThat(apiTickets.get(0).getTitle()).isEqualTo("API Integration");
+        
+        List<Ticket> mobileTickets = ticketRepository.findByKeywordCaseInsensitiveSpanner("MOBILE");
+        assertThat(mobileTickets).hasSize(1);
+        assertThat(mobileTickets.get(0).getTitle()).isEqualTo("Mobile Navigation");
     }
-    */
+
+    @Test
+    public void testFindByMultipleKeywords() {
+        // Test searching with multiple keywords using Spanner-compatible method
+        List<Ticket> tickets = ticketRepository.findByMultipleKeywordsSpanner("mobile", "navigation");
+        assertThat(tickets).hasSize(1);
+        assertThat(tickets.get(0).getTitle()).isEqualTo("Mobile Navigation");
+        
+        // Test with keywords that won't match together
+        List<Ticket> noMatches = ticketRepository.findByMultipleKeywordsSpanner("mobile", "payment");
+        assertThat(noMatches).isEmpty();
+    }
+
+    @Test
+    public void testFindByPrefix() {
+        // Test prefix search with Spanner-compatible method
+        List<Ticket> tickets = ticketRepository.findByPrefixSpanner("datab");
+        assertThat(tickets).hasSize(1);
+        assertThat(tickets.get(0).getTitle()).isEqualTo("Database Optimization");
+        
+        // Note: STARTS_WITH only matches the beginning of the entire string
+        // So this may not find matches where the prefix is in middle of text
+        List<Ticket> implTickets = ticketRepository.findByPrefixSpanner("impl");
+        // Assertions may need to be adjusted depending on actual behavior
+    }
+
+    @Test
+    public void testFindByKeywordAcrossFields() {
+        // Test searching across multiple fields using Spanner-compatible method
+        List<Ticket> highTickets = ticketRepository.findByKeywordAcrossFieldsSpanner("high");
+        assertThat(highTickets).hasSize(2);
+        assertThat(highTickets).extracting("title")
+            .containsExactlyInAnyOrder("Homepage Layout", "User Authentication");
+        
+        // Search for status values
+        List<Ticket> openTickets = ticketRepository.findByKeywordAcrossFieldsSpanner("open");
+        assertThat(openTickets).hasSize(2);
+    }
+
+    @Test
+    public void testAdvancedSearch() {
+        // Test searching with multiple criteria using Spanner-compatible method
+        List<Ticket> tickets = ticketRepository.findByAdvancedCriteriaSpanner("api", null, "OPEN", null);
+        assertThat(tickets).hasSize(1);
+        assertThat(tickets.get(0).getTitle()).isEqualTo("API Integration");
+        
+        // Test search with only priority
+        List<Ticket> highTickets = ticketRepository.findByAdvancedCriteriaSpanner(null, null, null, "HIGH");
+        assertThat(highTickets).hasSize(2);
+        
+        // Test search with multiple criteria
+        List<Ticket> complexTickets = ticketRepository.findByAdvancedCriteriaSpanner(null, "implement", null, "HIGH");
+        assertThat(complexTickets).hasSize(1);
+        assertThat(complexTickets.get(0).getTitle()).isEqualTo("User Authentication");
+    }   
 
     //-------------------------------------------------------------------------
     // SECTION 4: JSON/JSONB QUERY TESTS

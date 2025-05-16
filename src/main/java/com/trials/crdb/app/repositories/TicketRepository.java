@@ -100,4 +100,48 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
         @Param("status") TicketStatus status,
         @Param("priority") TicketPriority priority);
 
+    // For Spanner - Advanced search using STRPOS instead of ILIKE
+    @Query(value = "SELECT * FROM tickets t WHERE " +
+                "(:title IS NULL OR STRPOS(LOWER(t.title), LOWER(:title)) > 0) AND " +
+                "(:description IS NULL OR STRPOS(LOWER(t.description), LOWER(:description)) > 0) AND " +
+                "(:status IS NULL OR t.status = :status) AND " +
+                "(:priority IS NULL OR t.priority = :priority)",
+        nativeQuery = true)
+    List<Ticket> findByAdvancedCriteriaSpanner(
+        @Param("title") String title,
+        @Param("description") String description,
+        @Param("status") String status,
+        @Param("priority") String priority);
+
+    // For Spanner - Case insensitive search using STRPOS
+    @Query(value = "SELECT * FROM tickets WHERE " +
+                "STRPOS(LOWER(title), LOWER(:keyword)) > 0 OR " +
+                "STRPOS(LOWER(description), LOWER(:keyword)) > 0", 
+        nativeQuery = true)
+    List<Ticket> findByKeywordCaseInsensitiveSpanner(@Param("keyword") String keyword);
+
+    // For Spanner - Multiple keyword search
+    @Query(value = 
+        "SELECT * FROM tickets t WHERE " +
+        "(STRPOS(LOWER(t.title), LOWER(:keyword1)) > 0 AND STRPOS(LOWER(t.title), LOWER(:keyword2)) > 0) OR " +
+        "(STRPOS(LOWER(t.description), LOWER(:keyword1)) > 0 AND STRPOS(LOWER(t.description), LOWER(:keyword2)) > 0)",
+        nativeQuery = true)
+    List<Ticket> findByMultipleKeywordsSpanner(@Param("keyword1") String keyword1, @Param("keyword2") String keyword2);
+
+    // For Spanner - Prefix search using STARTS_WITH
+    @Query(value = "SELECT * FROM tickets WHERE " +
+                "STARTS_WITH(LOWER(title), LOWER(:prefix)) OR " +
+                "STARTS_WITH(LOWER(description), LOWER(:prefix))", 
+        nativeQuery = true)
+    List<Ticket> findByPrefixSpanner(@Param("prefix") String prefix);
+
+    // For Spanner - Search across fields
+    @Query(value = "SELECT * FROM tickets WHERE " +
+                "STRPOS(LOWER(title), LOWER(:keyword)) > 0 OR " +
+                "STRPOS(LOWER(description), LOWER(:keyword)) > 0 OR " +
+                "STRPOS(LOWER(status), LOWER(:keyword)) > 0 OR " +
+                "STRPOS(LOWER(priority), LOWER(:keyword)) > 0", 
+        nativeQuery = true)
+    List<Ticket> findByKeywordAcrossFieldsSpanner(@Param("keyword") String keyword);
+
 }
