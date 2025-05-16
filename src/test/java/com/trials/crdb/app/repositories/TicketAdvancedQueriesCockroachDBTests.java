@@ -329,10 +329,10 @@ public class TicketAdvancedQueriesCockroachDBTests {
         assertThat(complexTickets.get(0).getTitle()).isEqualTo("User Authentication");
     }
 
-    //-------------------------------------------------------------------------
+   //-------------------------------------------------------------------------
     // SECTION 4: JSON/JSONB QUERY TESTS
     //-------------------------------------------------------------------------
-    
+
     @Test
     public void testJsonbFieldQuery() {
         // Test querying by a JSON field value
@@ -341,32 +341,54 @@ public class TicketAdvancedQueriesCockroachDBTests {
         assertThat(frontendTickets).extracting("title")
             .containsExactlyInAnyOrder("Homepage Layout", "Mobile Navigation");
     }
-    
-    // Add these methods to TicketRepository:
-    // @Query(value = "SELECT * FROM tickets WHERE metadata->>'complexity'::int > :level", nativeQuery = true)
-    // List<Ticket> findByComplexityGreaterThan(@Param("level") int level);
-    
-    // @Query(value = "SELECT * FROM tickets WHERE metadata->'tags' ? :tag", nativeQuery = true)
-    // List<Ticket> findByTag(@Param("tag") String tag);
-    
-    /*
+
     @Test
-    public void testJsonbComplexQuery() {
-        // Add custom repository method first
+    public void testJsonbComplexityQuery() {
+        // Test querying with numeric comparison on JSON value
         List<Ticket> complexTickets = ticketRepository.findByComplexityGreaterThan(3);
         assertThat(complexTickets).hasSize(3);
         assertThat(complexTickets).extracting("title")
             .containsExactlyInAnyOrder("API Integration", "Database Optimization", "User Authentication");
     }
-    
+
     @Test
     public void testJsonbArrayQuery() {
-        // Add custom repository method first
+        // Test querying JSON arrays for specific values
+        List<Ticket> designTickets = ticketRepository.findByTag("design");
+        assertThat(designTickets).hasSize(1);
+        assertThat(designTickets.get(0).getTitle()).isEqualTo("Homepage Layout");
+        
         List<Ticket> securityTickets = ticketRepository.findByTag("security");
         assertThat(securityTickets).hasSize(1);
         assertThat(securityTickets.get(0).getTitle()).isEqualTo("User Authentication");
     }
-    */
+
+    @Test
+    public void testJsonbContainsKeys() {
+        // Test querying for tickets with specific keys in metadata
+        List<Ticket> tickets = ticketRepository.findByMetadataContainingKeys("component", "complexity");
+        assertThat(tickets).hasSize(5); // All tickets have both keys
+        
+        // Test with a key that only some tickets have
+        List<Ticket> platformTickets = ticketRepository.findByMetadataContainingKeys("component", "platform");
+        assertThat(platformTickets).hasSize(1);
+        assertThat(platformTickets.get(0).getTitle()).isEqualTo("Mobile Navigation");
+    }
+
+    @Test
+    public void testJsonbContainment() {
+
+        List<Object[]> values = ticketRepository.dumpMetadataValues("component");
+        for (Object[] row : values) {
+            System.out.println("Ticket ID: " + row[0] + ", component: " + row[1]);
+        }
+
+        // Test JSON containment operator
+        List<Ticket> tickets = ticketRepository.findByMetadataContaining("component", "\"frontend\"");
+        assertThat(tickets).hasSize(2);
+        assertThat(tickets).extracting("title")
+            .containsExactlyInAnyOrder("Homepage Layout", "Mobile Navigation");
+    }
 
     //-------------------------------------------------------------------------
     // SECTION 5: PAGINATION AND SORTING TESTS
