@@ -6,6 +6,8 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.trials.crdb.app.model.Ticket;
+import com.trials.crdb.app.model.Ticket.TicketPriority;
+import com.trials.crdb.app.model.Ticket.TicketStatus;
 import com.trials.crdb.app.model.User;
 import com.trials.crdb.app.model.Project;
 
@@ -52,4 +54,50 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     
     // Count tickets by project and status
     Long countByProjectAndStatus(Project project, Ticket.TicketStatus status);
+
+    /* 
+     * PostgreSQL-specific features like:
+
+        Using ILIKE for case-insensitive matching
+        Using PostgreSQL's ARRAY constructor and ALL predicate
+        PostgreSQL-style casting with CAST(field AS string)
+        Standard PostgreSQL string concatenation with CONCAT()
+    */
+
+    // Case insensitive search - using PostgreSQL ILIKE
+    @Query("SELECT t FROM Ticket t WHERE t.title ILIKE CONCAT('%', :keyword, '%') OR t.description ILIKE CONCAT('%', :keyword, '%')")
+    List<Ticket> findByKeywordCaseInsensitive(@Param("keyword") String keyword);
+
+    // Multi-word search with array parameter and ALL construct
+    @Query(value = "SELECT * FROM tickets WHERE " +
+                "title ILIKE ALL(ARRAY[CONCAT('%', :keyword1, '%'), CONCAT('%', :keyword2, '%')]) OR " +
+                "description ILIKE ALL(ARRAY[CONCAT('%', :keyword1, '%'), CONCAT('%', :keyword2, '%')])", 
+        nativeQuery = true)
+    List<Ticket> findByMultipleKeywords(@Param("keyword1") String keyword1, @Param("keyword2") String keyword2);
+
+    // Prefix search with ILIKE
+    @Query("SELECT t FROM Ticket t WHERE t.title ILIKE CONCAT(:prefix, '%') OR t.description ILIKE CONCAT(:prefix, '%')")
+    List<Ticket> findByPrefix(@Param("prefix") String prefix);
+
+    // Multiple field search including enums as strings
+    @Query("SELECT t FROM Ticket t WHERE " +
+        "t.title ILIKE CONCAT('%', :keyword, '%') OR " +
+        "t.description ILIKE CONCAT('%', :keyword, '%') OR " +
+        "CAST(t.status AS string) ILIKE CONCAT('%', :keyword, '%') OR " +
+        "CAST(t.priority AS string) ILIKE CONCAT('%', :keyword, '%')")
+    List<Ticket> findByKeywordAcrossFields(@Param("keyword") String keyword);
+
+    // The ILIKE operator expects text values, but Hibernate is passing a bytea (binary) type for some parameters
+    // Advanced search with multiple optional criteria
+    @Query("SELECT t FROM Ticket t WHERE " +
+        "(:title IS NULL OR t.title ILIKE CONCAT('%', CAST(:title AS text), '%')) AND " +
+        "(:description IS NULL OR t.description ILIKE CONCAT('%', CAST(:description AS text), '%')) AND " +
+        "(:status IS NULL OR t.status = :status) AND " +
+        "(:priority IS NULL OR t.priority = :priority)")
+    List<Ticket> findByAdvancedCriteria(
+        @Param("title") String title,
+        @Param("description") String description,
+        @Param("status") TicketStatus status,
+        @Param("priority") TicketPriority priority);
+
 }
