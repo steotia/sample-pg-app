@@ -17,6 +17,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -505,14 +508,10 @@ public class TicketAdvancedQueriesSpannerTests {
             .containsExactlyInAnyOrder("Homepage Layout", "Mobile Navigation");
     }
 
-    //-------------------------------------------------------------------------
+   //-------------------------------------------------------------------------
     // SECTION 5: PAGINATION AND SORTING TESTS
     //-------------------------------------------------------------------------
     
-    // Add this method to TicketRepository:
-    // Page<Ticket> findByProject(Project project, Pageable pageable);
-    
-    /*
     @Test
     public void testPagination() {
         // Test pagination with Spring Data
@@ -529,9 +528,9 @@ public class TicketAdvancedQueriesSpannerTests {
     
     @Test
     public void testSorting() {
-        // Test sorting with Spring Data
-        List<Ticket> sortedByPriority = ticketRepository.findAll(
-            Sort.by(Sort.Direction.DESC, "priority"));
+        // Use the custom sorting method
+        List<Ticket> sortedByPriority = ticketRepository.findAllOrderByPriorityCustom();
+        
         assertThat(sortedByPriority).hasSize(5);
         assertThat(sortedByPriority.get(0).getPriority()).isEqualTo(Ticket.TicketPriority.CRITICAL);
         assertThat(sortedByPriority.get(0).getTitle()).isEqualTo("Database Optimization");
@@ -545,7 +544,6 @@ public class TicketAdvancedQueriesSpannerTests {
         assertThat(page.getContent()).hasSize(3);
         assertThat(page.getContent().get(0).getTitle()).isEqualTo("API Integration");
     }
-    */
 
     //-------------------------------------------------------------------------
     // SECTION 6: COUNT AND AGGREGATION TESTS

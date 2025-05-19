@@ -227,4 +227,8 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
        nativeQuery = true)
     List<Ticket> findAllOrderByPriorityCustom();
 
+    // Add this method to TicketRepository:
+    @Query("SELECT t.priority, COUNT(t) FROM Ticket t GROUP BY t.priority")
+    List<Object[]> countByPriority();
+
 }

@@ -391,12 +391,9 @@ public class TicketAdvancedQueriesCockroachDBTests {
             .containsExactlyInAnyOrder("Homepage Layout", "Mobile Navigation");
     }
 
-    //-------------------------------------------------------------------------
+   //-------------------------------------------------------------------------
     // SECTION 5: PAGINATION AND SORTING TESTS
     //-------------------------------------------------------------------------
-    
-    // Add this method to TicketRepository:
-    // Page<Ticket> findByProject(Project project, Pageable pageable);
     
     @Test
     public void testPagination() {
