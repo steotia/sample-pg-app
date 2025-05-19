@@ -11,6 +11,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -397,7 +398,6 @@ public class TicketAdvancedQueriesCockroachDBTests {
     // Add this method to TicketRepository:
     // Page<Ticket> findByProject(Project project, Pageable pageable);
     
-    /*
     @Test
     public void testPagination() {
         // Test pagination with Spring Data
@@ -414,9 +414,9 @@ public class TicketAdvancedQueriesCockroachDBTests {
     
     @Test
     public void testSorting() {
-        // Test sorting with Spring Data
-        List<Ticket> sortedByPriority = ticketRepository.findAll(
-            Sort.by(Sort.Direction.DESC, "priority"));
+        // Use the custom sorting method
+        List<Ticket> sortedByPriority = ticketRepository.findAllOrderByPriorityCustom();
+        
         assertThat(sortedByPriority).hasSize(5);
         assertThat(sortedByPriority.get(0).getPriority()).isEqualTo(Ticket.TicketPriority.CRITICAL);
         assertThat(sortedByPriority.get(0).getTitle()).isEqualTo("Database Optimization");
@@ -430,7 +430,6 @@ public class TicketAdvancedQueriesCockroachDBTests {
         assertThat(page.getContent()).hasSize(3);
         assertThat(page.getContent().get(0).getTitle()).isEqualTo("API Integration");
     }
-    */
 
     //-------------------------------------------------------------------------
     // SECTION 6: COUNT AND AGGREGATION TESTS
