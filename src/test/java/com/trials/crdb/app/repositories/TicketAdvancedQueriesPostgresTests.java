@@ -14,6 +14,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.JpaSort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.lang.NonNull;
 import org.springframework.test.context.ContextConfiguration;
@@ -404,34 +405,34 @@ public class TicketAdvancedQueriesPostgresTests {
     @Test
     public void testPagination() {
         // Test pagination with Spring Data
-        // Page<Ticket> firstPage = ticketRepository.findByProject(
-        //     project1, PageRequest.of(0, 2));
-        // assertThat(firstPage.getTotalElements()).isEqualTo(3);
-        // assertThat(firstPage.getContent()).hasSize(2);
-        // assertThat(firstPage.getTotalPages()).isEqualTo(2);
-        // 
-        // Page<Ticket> secondPage = ticketRepository.findByProject(
-        //     project1, PageRequest.of(1, 2));
-        // assertThat(secondPage.getContent()).hasSize(1);
+        Page<Ticket> firstPage = ticketRepository.findByProject(
+            project1, PageRequest.of(0, 2));
+        assertThat(firstPage.getTotalElements()).isEqualTo(3);
+        assertThat(firstPage.getContent()).hasSize(2);
+        assertThat(firstPage.getTotalPages()).isEqualTo(2);
+        
+        Page<Ticket> secondPage = ticketRepository.findByProject(
+            project1, PageRequest.of(1, 2));
+        assertThat(secondPage.getContent()).hasSize(1);
     }
     
     @Test
     public void testSorting() {
-        // Test sorting with Spring Data
-        // List<Ticket> sortedByPriority = ticketRepository.findAll(
-        //     Sort.by(Sort.Direction.DESC, "priority"));
-        // assertThat(sortedByPriority).hasSize(5);
-        // assertThat(sortedByPriority.get(0).getPriority()).isEqualTo(TicketPriority.CRITICAL);
-        // assertThat(sortedByPriority.get(0).getTitle()).isEqualTo("Database Optimization");
+        // Use the custom sorting method
+        List<Ticket> sortedByPriority = ticketRepository.findAllOrderByPriorityCustom();
+        
+        assertThat(sortedByPriority).hasSize(5);
+        assertThat(sortedByPriority.get(0).getPriority()).isEqualTo(Ticket.TicketPriority.CRITICAL);
+        assertThat(sortedByPriority.get(0).getTitle()).isEqualTo("Database Optimization");
     }
     
     @Test
     public void testPaginationAndSorting() {
         // Test pagination combined with sorting
-        // Page<Ticket> page = ticketRepository.findAll(
-        //     PageRequest.of(0, 3, Sort.by(Sort.Direction.ASC, "title")));
-        // assertThat(page.getContent()).hasSize(3);
-        // assertThat(page.getContent().get(0).getTitle()).isEqualTo("API Integration");
+        Page<Ticket> page = ticketRepository.findAll(
+            PageRequest.of(0, 3, Sort.by(Sort.Direction.ASC, "title")));
+        assertThat(page.getContent()).hasSize(3);
+        assertThat(page.getContent().get(0).getTitle()).isEqualTo("API Integration");
     }
 
     //-------------------------------------------------------------------------

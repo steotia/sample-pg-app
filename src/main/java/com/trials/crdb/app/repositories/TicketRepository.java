@@ -13,6 +13,9 @@ import com.trials.crdb.app.model.Ticket.TicketPriority;
 import com.trials.crdb.app.model.Ticket.TicketStatus;
 import com.trials.crdb.app.model.User;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 @Repository
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
@@ -22,6 +25,7 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     List<Ticket> findByAssignee(User assignee);
     List<Ticket> findByReporter(User reporter);
     List<Ticket> findByProject(Project project);
+    Page<Ticket> findByProject(Project project, Pageable pageable);
     
     // Combined finders
     List<Ticket> findByStatusAndPriority(Ticket.TicketStatus status, Ticket.TicketPriority priority);
@@ -195,4 +199,23 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     // @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM UNNEST(JSON_QUERY(t.metadata, '$.tags')) AS tag WHERE JSON_VALUE(tag, '$') = ?1)", nativeQuery = true)
     @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(t.metadata->'tags') tag WHERE tag::text = ?1)", nativeQuery = true)
     List<Ticket> findByTagSpanner(@Param("tag") String tag);
+
+    // @Query(value = "SELECT * FROM tickets ORDER BY CASE priority " +
+    //               "WHEN 'CRITICAL' THEN 0 " +
+    //               "WHEN 'HIGH' THEN 1 " +
+    //               "WHEN 'MEDIUM' THEN 2 " +
+    //               "WHEN 'LOW' THEN 3 END DESC", 
+    //        nativeQuery = true)
+    // List<Ticket> findAllOrderByPriorityCustom();
+
+    @Query(value = "SELECT *, CASE priority " +
+              "WHEN 'CRITICAL' THEN 0 " +
+              "WHEN 'HIGH' THEN 1 " +
+              "WHEN 'MEDIUM' THEN 2 " +
+              "WHEN 'LOW' THEN 3 " +
+              "ELSE 999 END AS priority_order " +
+              "FROM tickets ORDER BY priority_order ASC", 
+       nativeQuery = true)
+    List<Ticket> findAllOrderByPriorityCustom();
+
 }
