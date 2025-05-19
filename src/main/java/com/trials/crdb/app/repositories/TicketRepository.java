@@ -231,4 +231,11 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     @Query("SELECT t.priority, COUNT(t) FROM Ticket t GROUP BY t.priority")
     List<Object[]> countByPriority();
 
+    @Query(value = "SELECT t.* FROM tickets t " +
+                   "JOIN users u ON t.reporter_id = u.id " +
+                   "WHERE u.username = :username AND " +
+                   "t.status NOT IN ('CLOSED', 'RESOLVED')", 
+           nativeQuery = true)
+    List<Ticket> findActiveTicketsByReporterUsername(@Param("username") String username);
+
 }

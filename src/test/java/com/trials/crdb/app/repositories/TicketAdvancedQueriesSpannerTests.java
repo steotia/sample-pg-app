@@ -585,15 +585,6 @@ public class TicketAdvancedQueriesSpannerTests {
     // SECTION 7: NATIVE QUERY TESTS 
     //-------------------------------------------------------------------------
     
-    // Add this method to TicketRepository:
-    // @Query(value = "SELECT t.* FROM tickets t " +
-    //                "JOIN users u ON t.reporter_id = u.id " +
-    //                "WHERE u.username = :username AND " +
-    //                "t.status NOT IN ('CLOSED', 'RESOLVED')", 
-    //        nativeQuery = true)
-    // List<Ticket> findActiveTicketsByReporterUsername(@Param("username") String username);
-    
-    /*
     @Test
     public void testNativeQuery() {
         // Test native SQL query
@@ -602,5 +593,4 @@ public class TicketAdvancedQueriesSpannerTests {
         assertThat(johnsActiveTickets).extracting("title")
             .containsExactlyInAnyOrder("Homepage Layout", "API Integration");
     }
-    */
 }

@@ -399,9 +399,6 @@ public class TicketAdvancedQueriesPostgresTests {
     // SECTION 5: PAGINATION AND SORTING TESTS
     //-------------------------------------------------------------------------
     
-    // Add this method to TicketRepository:
-    // Page<Ticket> findByProject(Project project, Pageable pageable);
-    
     @Test
     public void testPagination() {
         // Test pagination with Spring Data
@@ -475,20 +472,12 @@ public class TicketAdvancedQueriesPostgresTests {
     // SECTION 7: NATIVE QUERY TESTS 
     //-------------------------------------------------------------------------
     
-    // Add this method to TicketRepository:
-    // @Query(value = "SELECT t.* FROM tickets t " +
-    //                "JOIN users u ON t.reporter_id = u.id " +
-    //                "WHERE u.username = :username AND " +
-    //                "t.status NOT IN ('CLOSED', 'RESOLVED')", 
-    //        nativeQuery = true)
-    // List<Ticket> findActiveTicketsByReporterUsername(@Param("username") String username);
-    
     @Test
     public void testNativeQuery() {
         // Test native SQL query
-        // List<Ticket> johnsActiveTickets = ticketRepository.findActiveTicketsByReporterUsername("john");
-        // assertThat(johnsActiveTickets).hasSize(2);
-        // assertThat(johnsActiveTickets).extracting("title")
-        //     .containsExactlyInAnyOrder("Homepage Layout", "API Integration");
+        List<Ticket> johnsActiveTickets = ticketRepository.findActiveTicketsByReporterUsername("john");
+        assertThat(johnsActiveTickets).hasSize(2);
+        assertThat(johnsActiveTickets).extracting("title")
+            .containsExactlyInAnyOrder("Homepage Layout", "API Integration");
     }
 }
