@@ -566,26 +566,20 @@ public class TicketAdvancedQueriesSpannerTests {
         assertThat(project2ClosedCount).isEqualTo(1);
     }
     
-    // Add this method to TicketRepository:
-    // @Query("SELECT t.priority, COUNT(t) FROM Ticket t GROUP BY t.priority")
-    // List<Object[]> countByPriority();
-    
-    /*
     @Test
     public void testCountGroupByPriority() {
         // Add custom repository method first
         List<Object[]> priorityCounts = ticketRepository.countByPriority();
         assertThat(priorityCounts).hasSize(3); // LOW, MEDIUM, HIGH, CRITICAL (but we only used 3)
         
-        Map<Ticket.TicketPriority, Long> countMap = new HashMap<>();
+        Map<TicketPriority, Long> countMap = new HashMap<>();
         for (Object[] result : priorityCounts) {
-            countMap.put((Ticket.TicketPriority) result[0], (Long) result[1]);
+            countMap.put((TicketPriority) result[0], (Long) result[1]);
         }
         
-        assertThat(countMap.get(Ticket.TicketPriority.MEDIUM)).isEqualTo(2L);
-        assertThat(countMap.get(Ticket.TicketPriority.HIGH)).isEqualTo(2L);
+        assertThat(countMap.get(TicketPriority.MEDIUM)).isEqualTo(2L);
+        assertThat(countMap.get(TicketPriority.HIGH)).isEqualTo(2L);
     }
-    */
 
     //-------------------------------------------------------------------------
     // SECTION 7: NATIVE QUERY TESTS 
