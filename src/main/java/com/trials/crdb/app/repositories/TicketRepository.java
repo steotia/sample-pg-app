@@ -182,6 +182,12 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     // CAST(?2 AS JSONB) is not working
     // @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?1, CAST(?2 AS JSONB))", nativeQuery = true)
     // @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?1, to_jsonb(?2))", nativeQuery = true)
+    // FAIL
+    /* 
+     * [ERROR]   TicketAdvancedQueriesSpannerTests.testJsonbContainment:494 » JpaSystem JDBC exception executing SQL [SELECT * FROM tickets 
+     * WHERE metadata @> jsonb_build_object(?, ?::text)] [ERROR: Postgres function jsonb_build_object(text, text) is not supported - Statement: 
+     * 'SELECT * FROM tickets WHERE metadata @> jsonb_build_object($1, $2::text)'] [n/a]
+     */
     @Query(value = "SELECT * FROM tickets WHERE metadata @> jsonb_build_object(?, ?::text)", nativeQuery = true)
     List<Ticket> findByMetadataContainingForSpanner(String key, String value);
 
@@ -197,6 +203,9 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     // @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM UNNEST(JSON_EXTRACT_ARRAY(t.metadata, '$.tags')) AS json_tag WHERE JSON_VALUE(json_tag, '$') = ?1)", nativeQuery = true)
     // TOIL JSON_QUERY does not exist
     // @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM UNNEST(JSON_QUERY(t.metadata, '$.tags')) AS tag WHERE JSON_VALUE(tag, '$') = ?1)", nativeQuery = true)
+    // @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(t.metadata->'tags') tag WHERE tag::text = ?1)", nativeQuery = true)
+    // ERROR this breaks Spanner
+    // @Query(value = "SELECT t.* FROM tickets t CROSS JOIN LATERAL jsonb_array_elements(t.metadata->'tags') AS tag WHERE tag::text = ?1;", nativeQuery = true)
     @Query(value = "SELECT * FROM tickets t WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(t.metadata->'tags') tag WHERE tag::text = ?1)", nativeQuery = true)
     List<Ticket> findByTagSpanner(@Param("tag") String tag);
 
