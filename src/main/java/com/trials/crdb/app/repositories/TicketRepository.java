@@ -1,5 +1,6 @@
 package com.trials.crdb.app.repositories;
 
+import java.time.ZonedDateTime;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -12,6 +13,11 @@ import com.trials.crdb.app.model.Ticket;
 import com.trials.crdb.app.model.Ticket.TicketPriority;
 import com.trials.crdb.app.model.Ticket.TicketStatus;
 import com.trials.crdb.app.model.User;
+
+import java.time.ZonedDateTime;
+import java.util.List;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -238,4 +244,37 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
            nativeQuery = true)
     List<Ticket> findActiveTicketsByReporterUsername(@Param("username") String username);
 
+    // PHASE
+
+    // Finding overdue tickets
+    @Query("SELECT t FROM Ticket t WHERE t.dueDate < :referenceTime AND t.status NOT IN ('RESOLVED', 'CLOSED')")
+    List<Ticket> findOverdueTickets(@Param("referenceTime") ZonedDateTime referenceTime);
+
+
+    // // Tickets due in the next N days
+    @Query("SELECT t FROM Ticket t WHERE t.dueDate BETWEEN :startDate AND :endDate AND t.status NOT IN ('RESOLVED', 'CLOSED')")
+    List<Ticket> findTicketsDueInRange(
+        @Param("startDate") ZonedDateTime startDate,
+        @Param("endDate") ZonedDateTime endDate);    
+        
+    // Filtering by date range
+    @Query("SELECT t FROM Ticket t WHERE t.createTime BETWEEN :startDate AND :endDate")
+    List<Ticket> findTicketsCreatedBetween(
+        @Param("startDate") ZonedDateTime startDate, 
+        @Param("endDate") ZonedDateTime endDate);
+
+    // Average resolution time query
+    // didn't work
+    // @Query("SELECT AVG(FUNCTION('EXTRACT', EPOCH FROM t.resolvedDate - t.createTime)) FROM Ticket t WHERE t.resolvedDate IS NOT NULL")
+    @Query(value = "SELECT AVG(EXTRACT(EPOCH FROM (resolved_date - create_time))) FROM tickets WHERE resolved_date IS NOT NULL", nativeQuery = true)
+    Double calculateAverageResolutionTimeInSeconds();
+
+    // PostgreSQL-specific interval calculation
+    @Query(value = "SELECT AVG(resolved_date - create_time) FROM tickets WHERE resolved_date IS NOT NULL", nativeQuery = true)
+    String calculateAverageResolutionTimeInterval();
+
+    // Timezone-aware query
+    @Query(value = "SELECT * FROM tickets WHERE DATE(due_date AT TIME ZONE :timezone) = CURRENT_DATE AND status NOT IN ('RESOLVED', 'CLOSED')", nativeQuery = true)
+    List<Ticket> findTicketsDueTodayInTimezone(@Param("timezone") String timezone);
+    
 }

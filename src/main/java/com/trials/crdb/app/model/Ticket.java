@@ -11,8 +11,13 @@ import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
+import java.time.Duration;
+import java.time.ZonedDateTime;
+
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+
+import com.trials.crdb.app.utils.DateTimeProvider;
 
 @Entity
 @Table(name = "tickets")
@@ -95,4 +100,62 @@ public class Ticket {
     public Object getMetadataValue(String key) {
         return this.metadata != null ? this.metadata.get(key) : null;
     }
+
+    // PHASE - add temporal fields
+
+    // Add these fields to the Ticket class
+    @Column
+    private ZonedDateTime dueDate;
+
+    @Column
+    private Double estimatedHours;
+
+    @Column
+    private ZonedDateTime resolvedDate;
+
+    // Getters and setters
+    public ZonedDateTime getDueDate() {
+        return dueDate;
+    }
+
+    public void setDueDate(ZonedDateTime dueDate) {
+        this.dueDate = dueDate;
+    }
+
+    public Double getEstimatedHours() {
+        return estimatedHours;
+    }
+
+    public void setEstimatedHours(Double estimatedHours) {
+        this.estimatedHours = estimatedHours;
+    }
+
+    public ZonedDateTime getResolvedDate() {
+        return resolvedDate;
+    }
+
+    public void setResolvedDate(ZonedDateTime resolvedDate) {
+        this.resolvedDate = resolvedDate;
+    }
+
+    public Duration getResolutionTime() {
+        if (createTime == null || resolvedDate == null) {
+            return null;
+        }
+        return Duration.between(createTime, resolvedDate);
+    }
+
+    // Then update the methods:
+    public boolean isOverdue() {
+        if (dueDate == null || status == TicketStatus.RESOLVED || status == TicketStatus.CLOSED) {
+            return false;
+        }
+        return DateTimeProvider.now().isAfter(dueDate);
+    }
+
+    public void resolve() {
+        this.status = TicketStatus.RESOLVED;
+        this.resolvedDate = DateTimeProvider.now();
+    }
+
 }
