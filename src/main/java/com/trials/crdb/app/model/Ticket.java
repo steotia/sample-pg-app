@@ -9,8 +9,9 @@ import lombok.Setter;
 
 import java.time.ZonedDateTime;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
-
+import java.util.Set;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 
@@ -156,6 +157,24 @@ public class Ticket {
     public void resolve() {
         this.status = TicketStatus.RESOLVED;
         this.resolvedDate = DateTimeProvider.now();
+    }
+
+    @OneToMany(mappedBy = "ticket", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private Set<Comment> comments = new HashSet<>();
+
+    // Add helper methods
+    public void addComment(Comment comment) {
+        this.comments.add(comment);
+        comment.setTicket(this);
+    }
+
+    public void removeComment(Comment comment) {
+        this.comments.remove(comment);
+        comment.setTicket(null);
+    }
+
+    public int getCommentCount() {
+        return comments != null ? comments.size() : 0;
     }
 
 }
