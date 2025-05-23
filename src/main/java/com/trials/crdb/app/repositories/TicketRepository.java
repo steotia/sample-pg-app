@@ -2,6 +2,7 @@ package com.trials.crdb.app.repositories;
 
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -276,5 +277,81 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     // Timezone-aware query
     @Query(value = "SELECT * FROM tickets WHERE DATE(due_date AT TIME ZONE :timezone) = CURRENT_DATE AND status NOT IN ('RESOLVED', 'CLOSED')", nativeQuery = true)
     List<Ticket> findTicketsDueTodayInTimezone(@Param("timezone") String timezone);
+
+    // Phase
+    // Arithmetic and aggregation
+    @Query(value = "SELECT SUM(estimated_hours) AS total, " +
+                "AVG(estimated_hours) AS average, " +
+                "MAX(estimated_hours) AS maximum, " +
+                "SQRT(SUM(estimated_hours * estimated_hours)) AS rms " +
+                "FROM tickets " +
+                "WHERE project_id = ?1", nativeQuery = true)
+    Map<String, Object> calculateProjectEstimationStatistics(Long projectId);
+
+    // Window functions - priority ranking
+    @Query(value = "SELECT id, title, priority, " +
+                "ROW_NUMBER() OVER(PARTITION BY project_id ORDER BY " +
+                "CASE priority " +
+                "  WHEN 'CRITICAL' THEN 0 " +
+                "  WHEN 'HIGH' THEN 1 " +
+                "  WHEN 'MEDIUM' THEN 2 " +
+                "  WHEN 'LOW' THEN 3 " +
+                "  ELSE 4 END) AS priority_rank " +
+                "FROM tickets " +
+                "WHERE status IN ('OPEN', 'IN_PROGRESS') " +
+                "ORDER BY project_id, priority_rank", nativeQuery = true)
+    List<Object[]> findTicketsWithPriorityRanking();
+
+    // Window functions - LAG/LEAD for time gap analysis
+    @Query(value = "SELECT id, title, create_time, " +
+                "LAG(title, 1) OVER(PARTITION BY project_id ORDER BY create_time) AS prev_ticket, " +
+                "LEAD(title, 1) OVER(PARTITION BY project_id ORDER BY create_time) AS next_ticket, " +
+                "EXTRACT(EPOCH FROM (create_time - LAG(create_time, 1) OVER(PARTITION BY project_id ORDER BY create_time)))/3600 AS hours_since_prev " +
+                "FROM tickets " +
+                "WHERE project_id = ?1 " +
+                "ORDER BY create_time", nativeQuery = true)
+    List<Object[]> findTicketSequenceWithTimeGaps(Long projectId);
+
+    // Array functions - PostgreSQL style
+    @Query(value = "SELECT id, title, tags, " +
+                "array_length(tags, 1) AS tag_count " +
+                "FROM tickets " +
+                "WHERE ?1 = ANY(tags) " +
+                "ORDER BY id", nativeQuery = true)
+    List<Object[]> findTicketsByTagWithArrayFunctions(String tag);
+
+    // Spanner-compatible version - avoiding arrays
+    @Query(value = "SELECT id, title " +
+                "FROM tickets " +
+                "WHERE tags IS NOT NULL AND " +
+                "STRPOS(ARRAY_TO_STRING(tags, ','), ?1) > 0 " +
+                "ORDER BY id", nativeQuery = true)
+    List<Object[]> findTicketsByTagSimplified(String tag);
+
+    // Basic CTE example
+    @Query(value = "WITH project_tickets AS (" +
+                "  SELECT t.* FROM tickets t " +
+                "  JOIN projects p ON t.project_id = p.id " +
+                "  WHERE p.name = ?1 " +
+                ") " +
+                "SELECT pt.id, pt.title, pt.status, pt.priority " +
+                "FROM project_tickets pt " +
+                "ORDER BY pt.priority, pt.id", nativeQuery = true)
+    List<Object[]> findTicketsWithCTEByProjectName(String projectName);
+
+    // Recursive CTE for dependency chains
+    @Query(value = "WITH RECURSIVE ticket_chain AS (" +
+                "  SELECT id, title, dependent_on_id, 1 AS depth " +
+                "  FROM tickets " +
+                "  WHERE id = ?1 " +
+                "  UNION ALL " +
+                "  SELECT t.id, t.title, t.dependent_on_id, tc.depth + 1 " +
+                "  FROM tickets t " +
+                // "  JOIN ticket_chain tc ON t.dependent_on_id = tc.id " +
+                "  JOIN ticket_chain tc ON t.id = tc.dependent_on_id " +
+                "  WHERE tc.depth < 10 " +
+                ") " +
+                "SELECT id, title, depth FROM ticket_chain ORDER BY depth DESC", nativeQuery = true)
+    List<Object[]> findTicketDependencyChain(Long ticketId);
     
 }

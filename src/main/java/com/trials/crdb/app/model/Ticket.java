@@ -177,4 +177,45 @@ public class Ticket {
         return comments != null ? comments.size() : 0;
     }
 
+    // Phase
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "dependent_on_id")
+    private Ticket dependentOn;
+
+    @OneToMany(mappedBy = "dependentOn")
+    private Set<Ticket> dependencies = new HashSet<>();
+
+    // Native array storage for tags - PostgreSQL specific
+    // This will need compatibility testing with other databases
+    @Column(columnDefinition = "text[]")
+    private String[] tags;
+
+    // Getters and setters
+    public Ticket getDependentOn() {
+        return dependentOn;
+    }
+
+    public void setDependentOn(Ticket dependentOn) {
+        this.dependentOn = dependentOn;
+    }
+
+    public Set<Ticket> getDependencies() {
+        return dependencies;
+    }
+
+    public String[] getTags() {
+        return tags;
+    }
+
+    public void setTags(String[] tags) {
+        this.tags = tags;
+    }
+
+    // Helper method to add a dependency
+    public void addDependency(Ticket dependency) {
+        dependency.setDependentOn(this);
+        this.dependencies.add(dependency);
+    }
+
 }
