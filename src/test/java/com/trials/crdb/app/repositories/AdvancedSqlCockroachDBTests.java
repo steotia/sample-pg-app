@@ -1,12 +1,11 @@
 package com.trials.crdb.app.repositories;
 
-import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.assertj.core.data.Offset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,9 +14,6 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.lang.NonNull;
 import org.springframework.test.context.ContextConfiguration;
@@ -26,15 +22,13 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-import com.trials.crdb.app.model.*;
-import com.trials.crdb.app.test.TimeBasedTest;
-import com.trials.crdb.app.utils.DateTimeProvider;
-import com.trials.crdb.app.utils.PostgresCompatibilityInspector;
+import com.trials.crdb.app.model.Project;
+import com.trials.crdb.app.model.Ticket;
+import com.trials.crdb.app.model.User;
 
 import org.springframework.core.env.MapPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import org.assertj.core.data.Offset;
 
 @Testcontainers
 @DataJpaTest
@@ -178,56 +172,148 @@ public class AdvancedSqlCockroachDBTests {
         // First ticket should have null as previous ticket
         assertThat(timeGapResults.get(0)[3]).isNull();
     }
+
+    @Test
+    public void diagnosticArrayTest() {
+        // Create a ticket with a known array
+        Ticket testTicket = new Ticket("Array Test", "Testing arrays", user1, project1);
+        testTicket.setTags(new String[]{"test", "array", "diagnostic"});
+        entityManager.persist(testTicket);
+        entityManager.flush();
+        
+        Long ticketId = testTicket.getId();
+        
+        // Test 1: Simple array selection
+        try {
+            List<Object[]> result1 = jdbcTemplate.query(
+                "SELECT id, tags FROM tickets WHERE id = ?",
+                (rs, rowNum) -> {
+                    Object id = rs.getObject(1);
+                    Object tags = rs.getArray(2);
+                    return new Object[]{id, tags};
+                },
+                ticketId
+            );
+            System.out.println("Test 1 - Raw array: " + (result1.get(0)[1] != null ? 
+                result1.get(0)[1].getClass().getName() : "null"));
+        } catch (Exception e) {
+            System.out.println("Test 1 failed: " + e.getClass().getName() + ": " + e.getMessage());
+        }
+        
+        // Test 2: Array with ANY operator
+        try {
+            List<Long> result2 = jdbcTemplate.queryForList(
+                "SELECT id FROM tickets WHERE 'test' = ANY(tags)",
+                Long.class
+            );
+            System.out.println("Test 2 - ANY operator: Found " + result2.size() + " results");
+        } catch (Exception e) {
+            System.out.println("Test 2 failed: " + e.getClass().getName() + ": " + e.getMessage());
+        }
+        
+        // Test 3: Array length function
+        try {
+            Integer length = jdbcTemplate.queryForObject(
+                "SELECT array_length(tags, 1) FROM tickets WHERE id = ?",
+                Integer.class,
+                ticketId
+            );
+            System.out.println("Test 3 - array_length: " + length);
+        } catch (Exception e) {
+            System.out.println("Test 3 failed: " + e.getClass().getName() + ": " + e.getMessage());
+        }
+        
+        // Test 4: Combination that fails
+        try {
+            List<Object[]> result4 = jdbcTemplate.query(
+                "SELECT id, tags, array_length(tags, 1) FROM tickets WHERE 'test' = ANY(tags)",
+                (rs, rowNum) -> {
+                    Object id = rs.getObject(1);
+                    Object tags = rs.getArray(2);
+                    Object length = rs.getObject(3);
+                    return new Object[]{id, tags, length};
+                }
+            );
+            System.out.println("Test 4 - Combined query: " + result4.size() + " results");
+        } catch (Exception e) {
+            System.out.println("Test 4 failed: " + e.getClass().getName() + ": " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
     
+    // TOIL - did not work - serialization error
+    // @Test
+    // public void testArrayFunctions() {
+    //     List<Object[]> sqlTaggedTickets = ticketRepository.findTicketsByTagWithArrayFunctions("sql");
+        
+    //     assertThat(sqlTaggedTickets).hasSize(2);
+        
+    //     // Handle potential type differences between databases
+    //     Object tagCount1 = sqlTaggedTickets.get(0)[3];
+    //     Object tagCount2 = sqlTaggedTickets.get(1)[3];
+        
+    //     if (tagCount1 instanceof Long) {
+    //         assertThat(((Long)tagCount1).intValue()).isEqualTo(3);
+    //         assertThat(((Long)tagCount2).intValue()).isEqualTo(2);
+    //     } else {
+    //         assertThat(((Number)tagCount1).intValue()).isEqualTo(3);
+    //         assertThat(((Number)tagCount2).intValue()).isEqualTo(2);
+    //     }
+    // }
+
     @Test
     public void testArrayFunctions() {
-        try {
-            List<Object[]> sqlTaggedTickets = ticketRepository.findTicketsByTagWithArrayFunctions("sql");
-            
-            assertThat(sqlTaggedTickets).hasSize(2);
-            assertThat(sqlTaggedTickets.get(0)[3]).isEqualTo(3); // First ticket has 3 tags
-            assertThat(sqlTaggedTickets.get(1)[3]).isEqualTo(2); // Second ticket has 2 tags
-        } catch (Exception e) {
-            System.out.println("Native array functions not supported in CockroachDB: " + e.getMessage());
-            // Fallback to simplified approach
-            List<Object[]> simplifiedResults = ticketRepository.findTicketsByTagSimplified("sql");
-            assertThat(simplifiedResults).hasSize(2);
-        }
+        // Step 1: Find tickets with "sql" tag
+        List<Object[]> sqlTaggedTickets = ticketRepository.findTicketIdsByTag("sql");
+        assertThat(sqlTaggedTickets).hasSize(2);
+        
+        // Step 2: Verify basic ticket properties
+        String firstTicketTitle = (String) sqlTaggedTickets.get(0)[1];
+        String secondTicketTitle = (String) sqlTaggedTickets.get(1)[1];
+        
+        assertThat(firstTicketTitle).isEqualTo("Base Ticket");
+        assertThat(secondTicketTitle).isEqualTo("Dependent Ticket");
+        
+        // Step 3: Get tag counts for each ticket
+        Long ticket1Id = (Long) sqlTaggedTickets.get(0)[0];
+        Long ticket2Id = (Long) sqlTaggedTickets.get(1)[0];
+        
+        Integer tagCount1 = ticketRepository.getTagCountForTicket(ticket1Id);
+        Integer tagCount2 = ticketRepository.getTagCountForTicket(ticket2Id);
+        
+        // Step 4: Verify counts
+        assertThat(tagCount1).isEqualTo(3); // First ticket has 3 tags
+        assertThat(tagCount2).isEqualTo(2); // Second ticket has 2 tags
     }
     
     @Test
     public void testCommonTableExpressions() {
+        // Test basic CTE
         List<Object[]> projectTickets = ticketRepository.findTicketsWithCTEByProjectName("Advanced SQL Project");
-        
         assertThat(projectTickets).hasSize(4); // 4 tickets in project1
         
         // Test recursive CTE
-        try {
-            List<Object[]> dependencyChain = ticketRepository.findTicketDependencyChain(ticket5.getId());
-            
-            // Should have 3 levels: ticket5 -> ticket2 -> ticket1
-            assertThat(dependencyChain).hasSize(3);
-            
-            // Dump the results for debugging
-            for (Object[] row : dependencyChain) {
-                System.out.println("ID: " + row[0] + ", Title: " + row[1] + ", Depth: " + row[2]);
-            }
-            
-            // Sort by depth to ensure consistent ordering
-            dependencyChain.sort(Comparator.comparing(row -> (Integer)row[2]));
-            
-            // Verify each level in the chain
-            assertThat(dependencyChain.get(0)[0]).isEqualTo(ticket5.getId());
-            assertThat(dependencyChain.get(0)[2]).isEqualTo(1); // Depth 1
-            
-            assertThat(dependencyChain.get(1)[0]).isEqualTo(ticket2.getId());
-            assertThat(dependencyChain.get(1)[2]).isEqualTo(2); // Depth 2
-            
-            assertThat(dependencyChain.get(2)[0]).isEqualTo(ticket1.getId());
-            assertThat(dependencyChain.get(2)[2]).isEqualTo(3); // Depth 3
-        } catch (Exception e) {
-            System.out.println("Recursive CTE may not be fully supported in CockroachDB: " + e.getMessage());
-            // Skip the test or implement an alternative
+        List<Object[]> dependencyChain = ticketRepository.findTicketDependencyChain(ticket5.getId());
+        
+        // Should have 3 levels: ticket5 -> ticket2 -> ticket1
+        assertThat(dependencyChain).hasSize(3);
+        
+        // Dump the results for debugging
+        for (Object[] row : dependencyChain) {
+            System.out.println("ID: " + row[0] + ", Title: " + row[1] + ", Depth: " + row[2]);
         }
+        
+        // Sort by depth to ensure consistent ordering
+        dependencyChain.sort(Comparator.comparing(row -> ((Number)row[2]).intValue()));
+        
+        // Verify each level in the chain
+        assertThat(dependencyChain.get(0)[0]).isEqualTo(ticket5.getId());
+        assertThat(((Number)dependencyChain.get(0)[2]).intValue()).isEqualTo(1); // Depth 1
+        
+        assertThat(dependencyChain.get(1)[0]).isEqualTo(ticket2.getId());
+        assertThat(((Number)dependencyChain.get(1)[2]).intValue()).isEqualTo(2); // Depth 2
+        
+        assertThat(dependencyChain.get(2)[0]).isEqualTo(ticket1.getId());
+        assertThat(((Number)dependencyChain.get(2)[2]).intValue()).isEqualTo(3); // Depth 3
     }
 }

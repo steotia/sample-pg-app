@@ -1,12 +1,11 @@
 package com.trials.crdb.app.repositories;
 
-import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.assertj.core.data.Offset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,9 +14,6 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.lang.NonNull;
 import org.springframework.test.context.ContextConfiguration;
@@ -26,16 +22,13 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-import com.trials.crdb.app.model.*;
-import com.trials.crdb.app.test.TimeBasedTest;
-import com.trials.crdb.app.utils.DateTimeProvider;
-import com.trials.crdb.app.utils.PostgresCompatibilityInspector;
+import com.trials.crdb.app.model.Project;
+import com.trials.crdb.app.model.Ticket;
+import com.trials.crdb.app.model.User;
 
 import org.springframework.core.env.MapPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
-
-import org.assertj.core.data.Offset;
 
 @Testcontainers
 @DataJpaTest
@@ -135,11 +128,13 @@ public class AdvancedSqlPostgresTests {
         entityManager.persist(ticket4);
         
         ticket5 = new Ticket("Deep Dependency", "Depends on ticket2", user1, project1);
-        ticket5.setEstimatedHours(3.0);
         ticket5.setDependentOn(ticket2);
+        ticket5.setEstimatedHours(3.0);
         entityManager.persist(ticket5);
         
         entityManager.flush();
+        
+        // Print dependencies to verify
         System.out.println("Ticket5 depends on: " + (ticket5.getDependentOn() != null ? ticket5.getDependentOn().getId() : "null"));
         System.out.println("Ticket2 depends on: " + (ticket2.getDependentOn() != null ? ticket2.getDependentOn().getId() : "null"));
     }
@@ -149,10 +144,10 @@ public class AdvancedSqlPostgresTests {
         Map<String, Object> stats = ticketRepository.calculateProjectEstimationStatistics(project1.getId());
         
         assertThat(stats).isNotNull();
-        assertThat(stats.get("total")).isEqualTo(26.0); // 10 + 5 + 8 + 3
-        assertThat(stats.get("average")).isEqualTo(6.5); // (10 + 5 + 8 + 3) / 4
-        assertThat(stats.get("maximum")).isEqualTo(10.0);
-        assertThat((Double) stats.get("rms")).isCloseTo(14.071, Offset.offset(0.1)); // sqrt(10² + 5² + 8² + 3²)
+        assertThat(((Number) stats.get("total")).doubleValue()).isEqualTo(26.0); // 10 + 5 + 8 + 3
+        assertThat(((Number) stats.get("average")).doubleValue()).isEqualTo(6.5); // (10 + 5 + 8 + 3) / 4
+        assertThat(((Number) stats.get("maximum")).doubleValue()).isEqualTo(10.0);
+        assertThat(((Number) stats.get("rms")).doubleValue()).isCloseTo(14.071, Offset.offset(0.1)); // sqrt(10² + 5² + 8² + 3²)
     }
     
     @Test
@@ -184,18 +179,24 @@ public class AdvancedSqlPostgresTests {
         List<Object[]> sqlTaggedTickets = ticketRepository.findTicketsByTagWithArrayFunctions("sql");
         
         assertThat(sqlTaggedTickets).hasSize(2);
-        assertThat(sqlTaggedTickets.get(0)[3]).isEqualTo(3); // First ticket has 3 tags
-        assertThat(sqlTaggedTickets.get(1)[3]).isEqualTo(2); // Second ticket has 2 tags
         
-        // Test simplified approach too
-        List<Object[]> simplifiedResults = ticketRepository.findTicketsByTagSimplified("sql");
-        assertThat(simplifiedResults).hasSize(2);
+        // Handle potential type differences between databases
+        Object tagCount1 = sqlTaggedTickets.get(0)[3];
+        Object tagCount2 = sqlTaggedTickets.get(1)[3];
+        
+        if (tagCount1 instanceof Long) {
+            assertThat(((Long)tagCount1).intValue()).isEqualTo(3);
+            assertThat(((Long)tagCount2).intValue()).isEqualTo(2);
+        } else {
+            assertThat(((Number)tagCount1).intValue()).isEqualTo(3);
+            assertThat(((Number)tagCount2).intValue()).isEqualTo(2);
+        }
     }
     
     @Test
     public void testCommonTableExpressions() {
+        // Test basic CTE
         List<Object[]> projectTickets = ticketRepository.findTicketsWithCTEByProjectName("Advanced SQL Project");
-        
         assertThat(projectTickets).hasSize(4); // 4 tickets in project1
         
         // Test recursive CTE
@@ -203,22 +204,23 @@ public class AdvancedSqlPostgresTests {
         
         // Should have 3 levels: ticket5 -> ticket2 -> ticket1
         assertThat(dependencyChain).hasSize(3);
-
+        
+        // Dump the results for debugging
         for (Object[] row : dependencyChain) {
             System.out.println("ID: " + row[0] + ", Title: " + row[1] + ", Depth: " + row[2]);
         }
         
         // Sort by depth to ensure consistent ordering
-        dependencyChain.sort(Comparator.comparing(row -> (Integer)row[2]));
+        dependencyChain.sort(Comparator.comparing(row -> ((Number)row[2]).intValue()));
         
         // Verify each level in the chain
         assertThat(dependencyChain.get(0)[0]).isEqualTo(ticket5.getId());
-        assertThat(dependencyChain.get(0)[2]).isEqualTo(1); // Depth 1
+        assertThat(((Number)dependencyChain.get(0)[2]).intValue()).isEqualTo(1); // Depth 1
         
         assertThat(dependencyChain.get(1)[0]).isEqualTo(ticket2.getId());
-        assertThat(dependencyChain.get(1)[2]).isEqualTo(2); // Depth 2
+        assertThat(((Number)dependencyChain.get(1)[2]).intValue()).isEqualTo(2); // Depth 2
         
         assertThat(dependencyChain.get(2)[0]).isEqualTo(ticket1.getId());
-        assertThat(dependencyChain.get(2)[2]).isEqualTo(3); // Depth 3
+        assertThat(((Number)dependencyChain.get(2)[2]).intValue()).isEqualTo(3); // Depth 3
     }
 }

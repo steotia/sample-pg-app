@@ -354,4 +354,11 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
                 "SELECT id, title, depth FROM ticket_chain ORDER BY depth DESC", nativeQuery = true)
     List<Object[]> findTicketDependencyChain(Long ticketId);
     
+    // Step 1: Find tickets with matching tag 
+    @Query(value = "SELECT id, title FROM tickets WHERE ?1 = ANY(tags) ORDER BY id", nativeQuery = true)
+    List<Object[]> findTicketIdsByTag(String tag);
+
+    // Step 2: Get tag count for a specific ticket (separate query)
+    @Query(value = "SELECT array_length(tags, 1) FROM tickets WHERE id = ?1", nativeQuery = true)
+    Integer getTagCountForTicket(Long ticketId);
 }
