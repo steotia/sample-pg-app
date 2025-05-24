@@ -537,6 +537,136 @@ public class NumericalOperationsPostgresTests {
         
         throw new IllegalArgumentException("Not a PostgreSQL array: " + pgArray);
     }
+
+    @Test
+    public void testDecimalPrecisionAndTrailingZeros() {
+        // Create a table with explicit precision/scale
+        jdbcTemplate.execute("DROP TABLE IF EXISTS precision_test");
+        jdbcTemplate.execute(
+            "CREATE TABLE precision_test (" +
+            "  id SERIAL PRIMARY KEY," +
+            "  val1 DECIMAL(10,2), " +  // 2 decimal places
+            "  val2 DECIMAL(10,4), " +  // 4 decimal places
+            "  val3 NUMERIC(10,0) " +   // 0 decimal places (whole number)
+            ")"
+        );
+        
+        // Insert values with trailing zeros
+        jdbcTemplate.update(
+            "INSERT INTO precision_test (val1, val2, val3) VALUES (?, ?, ?)",
+            new BigDecimal("123.40"), new BigDecimal("123.4000"), new BigDecimal("1230")
+        );
+        
+        // Test retrieval of values
+        List<Map<String, Object>> results = jdbcTemplate.queryForList(
+            "SELECT * FROM precision_test"
+        );
+        
+        Map<String, Object> row = results.get(0);
+        
+        // Verify scale is preserved
+        BigDecimal val1 = toBigDecimal(row.get("val1"));
+        BigDecimal val2 = toBigDecimal(row.get("val2"));
+        BigDecimal val3 = toBigDecimal(row.get("val3"));
+        
+        // Check scale is preserved
+        assertThat(val1.scale()).isEqualTo(2);
+        assertThat(val2.scale()).isEqualTo(4);
+        assertThat(val3.scale()).isEqualTo(0);
+        
+        // Check trailing zeros are preserved
+        assertThat(val1.toPlainString()).isEqualTo("123.40");
+        assertThat(val2.toPlainString()).isEqualTo("123.4000");
+        assertThat(val3.toPlainString()).isEqualTo("1230");
+    }
+
+    @Test
+    public void testVeryHighPrecision() {
+        // Test very high precision arithmetic
+        List<Map<String, Object>> results = jdbcTemplate.queryForList(
+            "SELECT " +
+            "  CAST('0.1234567890123456789012345678901234567890' AS DECIMAL(40,38)) AS high_precision, " +
+            "  CAST('0.1234567890123456789012345678901234567890' AS DECIMAL(40,38)) * " +
+            "  CAST('0.9876543210987654321098765432109876543210' AS DECIMAL(40,38)) AS high_precision_mul " +
+            "FROM numeric_test LIMIT 1"
+        );
+        
+        Map<String, Object> row = results.get(0);
+        
+        BigDecimal highPrecision = toBigDecimal(row.get("high_precision"));
+        BigDecimal highPrecisionMul = toBigDecimal(row.get("high_precision_mul"));
+        
+        // Check that PostgreSQL can handle high precision
+        assertThat(highPrecision.toPlainString()).startsWith("0.12345678901234567890");
+        assertThat(highPrecision.scale()).isGreaterThanOrEqualTo(38);
+        
+        // Check multiplication preserves high precision
+        assertThat(highPrecisionMul.scale()).isGreaterThanOrEqualTo(38);
+    }
+
+    @Test
+    public void testExplicitRoundingWithScale() {
+        // Test explicit rounding with different scales
+        List<Map<String, Object>> results = jdbcTemplate.queryForList(
+            "SELECT " +
+            "  ROUND(123.456, 0) AS round_0, " +
+            "  ROUND(123.456, 1) AS round_1, " +
+            "  ROUND(123.456, 2) AS round_2, " +
+            "  ROUND(123.456, -1) AS round_neg_1, " +
+            "  ROUND(1.5) AS round_default, " +
+            "  ROUND(2.5) AS round_default_2 " +
+            "FROM numeric_test LIMIT 1"
+        );
+        
+        Map<String, Object> row = results.get(0);
+        
+        // Check rounding behavior
+        assertThat(toBigDecimal(row.get("round_0")).toPlainString()).isEqualTo("123");
+        assertThat(toBigDecimal(row.get("round_1")).toPlainString()).isEqualTo("123.5");
+        assertThat(toBigDecimal(row.get("round_2")).toPlainString()).isEqualTo("123.46");
+        assertThat(toBigDecimal(row.get("round_neg_1")).toPlainString()).isEqualTo("120");
+        
+        // PostgreSQL rounds to nearest even number for tie-breaking (banker's rounding)
+        assertThat(toBigDecimal(row.get("round_default")).toPlainString()).isEqualTo("2");
+        assertThat(toBigDecimal(row.get("round_default_2")).toPlainString()).isEqualTo("3");
+    }
+
+    @Test
+    public void testIntervalOperations() {
+        List<Map<String, Object>> results = jdbcTemplate.queryForList(
+            "SELECT " +
+            "  INTERVAL '1 day' + INTERVAL '2 hours' AS interval_addition, " +
+            "  INTERVAL '1 day' * 2 AS interval_multiplication, " +
+            "  JUSTIFY_HOURS(INTERVAL '30 hours') AS interval_justify, " +
+            "  (JUSTIFY_HOURS(INTERVAL '30 hours'))::TIME AS interval_time_part, " +
+            "  EXTRACT(hours FROM INTERVAL '1 day 2 hours') AS extract_from_interval, " +
+            "  AGE(TIMESTAMP '2023-01-02', TIMESTAMP '2023-01-01') AS age_between_timestamps, " +
+            "  TIMESTAMP '2023-01-01' + INTERVAL '1 day' AS timestamp_plus_interval " +
+            "FROM numeric_test LIMIT 1"
+        );
+        
+        Map<String, Object> row = results.get(0);
+        
+        // Test interval addition
+        assertThat(row.get("interval_addition").toString()).contains("1 day");
+        
+        // Test interval multiplication 
+        assertThat(row.get("interval_multiplication").toString()).contains("2 days");
+        
+        // Test interval normalization
+        assertThat(row.get("interval_justify").toString()).contains("1 day");
+        // Check the time part separately using the TIME cast
+        assertThat(row.get("interval_time_part").toString()).isEqualTo("06:00:00");
+        
+        // Test extracting from interval
+        assertThat(((Number)row.get("extract_from_interval")).intValue()).isEqualTo(2);
+        
+        // Test age function
+        assertThat(row.get("age_between_timestamps").toString()).contains("1 day");
+        
+        // Test timestamp + interval
+        assertThat(row.get("timestamp_plus_interval").toString()).startsWith("2023-01-02");
+    }
     
     /**
      * Helper for approximate comparisons
