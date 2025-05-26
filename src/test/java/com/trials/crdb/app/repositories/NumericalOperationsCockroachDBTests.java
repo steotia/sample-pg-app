@@ -133,7 +133,7 @@ public class NumericalOperationsCockroachDBTests {
         );
         
         Map<String, Object> row = results.get(0);
-        // TOIL - CockroachDB: Returns BIGINT (Long) instead of INTEGER
+        // TOIL - CockroachDB: Returns BigDecimal? instead of INTEGER
         // WORKAROUND - Cast to Integer or use Number.intValue()
         assertThat(((Number)row.get("precedence1")).intValue()).isEqualTo(14);
         assertThat(((Number)row.get("precedence2")).intValue()).isEqualTo(20);
@@ -332,7 +332,7 @@ public class NumericalOperationsCockroachDBTests {
         
         Map<String, Object> row = results.get(0);
         
-        // TOIL - CockroachDB: Returns BIGINT (Long) instead of INTEGER for ABS function
+        // TOIL - CockroachDB: Returns BIGDECIMAL? instead of INTEGER for ABS function
         // assertThat(row.get("abs_neg")).isEqualTo(42);
         // WORKAROUND - Cast to Number and use intValue()
         assertThat(((Number)row.get("abs_neg")).intValue()).isEqualTo(42);
@@ -441,7 +441,7 @@ public class NumericalOperationsCockroachDBTests {
         
         Map<String, Object> row = results.get(0);
         
-        // TOIL - CockroachDB: Returns BIGINT instead of INTEGER for cast results
+        // TOIL - CockroachDB: Returns BIGDECIMAL? instead of INTEGER for cast results
         // WORKAROUND - Use Number.intValue() for consistent behavior
         assertThat(((Number)row.get("decimal_to_int")).intValue()).isEqualTo(123);
         assertThat(toBigDecimal(row.get("int_to_decimal"))).isEqualTo(new BigDecimal("123.00"));
