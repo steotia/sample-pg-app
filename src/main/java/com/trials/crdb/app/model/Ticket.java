@@ -217,5 +217,18 @@ public class Ticket {
         dependency.setDependentOn(this);
         this.dependencies.add(dependency);
     }
+    // Transaction & Concurrency Control
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version = 0L;
+
+    // Add getter and setter
+    public Long getVersion() {
+        return version;
+    }
+
+    public void setVersion(Long version) {
+        this.version = version;
+    }
 
 }
