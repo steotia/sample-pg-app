@@ -79,35 +79,106 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
     public void testBasicOptimisticLocking() {
         logTestContext("Basic Optimistic Locking Test");
         
+        // TOIL - Original approach doesn't work because entities become detached
         // Load the same ticket in two separate transactions
+        // Ticket ticket1 = transactionTemplate.execute(status -> 
+        //     ticketRepository.findById(testTicket.getId()).orElseThrow()
+        // );
+        
+        // WORKAROUND - Load and update within the same transaction to keep entity managed
+        Long ticketId = testTicket.getId();
+        
+        // First transaction: Load, update, and save
+        Long firstVersion = transactionTemplate.execute(status -> {
+            Ticket ticket = ticketRepository.findById(ticketId).orElseThrow();
+            System.out.println("Initial version: " + ticket.getVersion());
+            assertThat(ticket.getVersion()).isEqualTo(0L);
+            
+            ticket.setStatus(Ticket.TicketStatus.IN_PROGRESS);
+            Ticket saved = ticketRepository.save(ticket);
+            entityManager.flush(); // Force flush to ensure version increment
+            
+            System.out.println("Version after update: " + saved.getVersion());
+            return saved.getVersion();
+        });
+        
+        // Verify version was incremented
+        assertThat(firstVersion).isEqualTo(1L);
+        System.out.println("First update succeeded, version now: " + firstVersion);
+        
+        // Second transaction: Load the same ticket (should have version 1)
+        Ticket ticket2 = transactionTemplate.execute(status -> 
+            ticketRepository.findById(ticketId).orElseThrow()
+        );
+        
+        assertThat(ticket2.getVersion()).isEqualTo(1L);
+        
+        // Try to update with stale version - simulate optimistic lock failure
+        Exception exception = assertThrows(Exception.class, () -> {
+            transactionTemplate.execute(status -> {
+                // Create a detached entity with stale version
+                Ticket staleTicket = new Ticket();
+                staleTicket.setId(ticketId);
+                staleTicket.setVersion(0L); // Stale version
+                staleTicket.setStatus(Ticket.TicketStatus.CLOSED);
+                staleTicket.setTitle("Updated title");
+                staleTicket.setDescription("Updated description");
+                staleTicket.setReporter(user1);
+                staleTicket.setProject(project1);
+                
+                ticketRepository.save(staleTicket);
+                entityManager.flush(); // Force the flush to trigger version check
+                return null;
+            });
+        });
+        
+        System.out.println("Second update failed with: " + exception.getClass().getName());
+        System.out.println("Exception message: " + exception.getMessage());
+        
+        // Verify it's an optimistic lock exception
+        assertThat(exception).isInstanceOf(ObjectOptimisticLockingFailureException.class);
+    }
+
+    @Test
+    public void testBasicOptimisticLockingWithDetachedEntities() {
+        logTestContext("Basic Optimistic Locking with Detached Entities Test");
+        
+        Long ticketId = testTicket.getId();
+        
+        // Load the same ticket in two separate transactions to get detached entities
         Ticket ticket1 = transactionTemplate.execute(status -> 
-            ticketRepository.findById(testTicket.getId()).orElseThrow()
+            ticketRepository.findById(ticketId).orElseThrow()
         );
         
         Ticket ticket2 = transactionTemplate.execute(status -> 
-            ticketRepository.findById(testTicket.getId()).orElseThrow()
+            ticketRepository.findById(ticketId).orElseThrow()
         );
         
         assertThat(ticket1.getVersion()).isEqualTo(0L);
         assertThat(ticket2.getVersion()).isEqualTo(0L);
         
-        // Update and save first ticket
+        // Update and save first ticket - use merge to handle detached entity properly
         transactionTemplate.execute(status -> {
             ticket1.setStatus(Ticket.TicketStatus.IN_PROGRESS);
-            ticketRepository.save(ticket1);
+            // TOIL - save() on detached entity might not increment version properly
+            // ticketRepository.save(ticket1);
+            // WORKAROUND - use merge explicitly or reload within transaction
+            Ticket managed = entityManager.merge(ticket1);
+            entityManager.flush();
             return null;
         });
         
         // Verify version was incremented
-        Ticket updated = ticketRepository.findById(testTicket.getId()).orElseThrow();
-        assertThat(updated.getVersion()).isEqualTo(1);
+        Ticket updated = ticketRepository.findById(ticketId).orElseThrow();
+        assertThat(updated.getVersion()).isEqualTo(1L);
         System.out.println("First update succeeded, version now: " + updated.getVersion());
         
-        // Try to update second ticket - should fail
+        // Try to update second ticket - should fail with optimistic lock exception
         Exception exception = assertThrows(Exception.class, () -> {
             transactionTemplate.execute(status -> {
                 ticket2.setStatus(Ticket.TicketStatus.CLOSED);
-                ticketRepository.save(ticket2);
+                entityManager.merge(ticket2);
+                entityManager.flush();
                 return null;
             });
         });
@@ -137,12 +208,14 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
         Ticket reloaded = ticketRepository.findById(saved.getId()).orElseThrow();
         System.out.println("After reload - Version: " + reloaded.getVersion());
         
-        // Update and save
-        reloaded.setTitle("Updated title");
-        ticketRepository.save(reloaded);
-        entityManager.flush();
-        
-        System.out.println("After update - Version: " + reloaded.getVersion());
+        // Update and save within transaction to ensure proper version handling
+        transactionTemplate.execute(status -> {
+            Ticket managed = entityManager.find(Ticket.class, reloaded.getId());
+            managed.setTitle("Updated title");
+            entityManager.flush();
+            System.out.println("After update - Version: " + managed.getVersion());
+            return null;
+        });
     }
     
     @Test
@@ -157,6 +230,7 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
         AtomicReference<String> failureType = new AtomicReference<>();
         
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        Long ticketId = testTicket.getId();
         
         for (int i = 0; i < threadCount; i++) {
             final int threadNum = i;
@@ -164,21 +238,28 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
                 try {
                     startLatch.await(); // Wait for signal to start
                     
-                    transactionTemplate.execute(status -> {
-                        Ticket ticket = ticketRepository.findById(testTicket.getId()).orElseThrow();
+                    // Create a new transaction template for each thread
+                    TransactionTemplate threadTransactionTemplate = new TransactionTemplate(transactionManager);
+                    
+                    threadTransactionTemplate.execute(status -> {
+                        // Load fresh entity within this transaction
+                        Ticket ticket = ticketRepository.findById(ticketId).orElseThrow();
                         ticket.setPriority(Ticket.TicketPriority.HIGH);
                         ticket.setDescription("Updated by thread " + threadNum);
                         ticketRepository.save(ticket);
+                        entityManager.flush(); // Force immediate flush
                         return null;
                     });
                     
                     successCount.incrementAndGet();
-                } catch (OptimisticLockingFailureException e) {
+                } catch (OptimisticLockingFailureException | ObjectOptimisticLockingFailureException e) {
                     failureCount.incrementAndGet();
                     failureType.set(e.getClass().getSimpleName());
                 } catch (Exception e) {
                     failureCount.incrementAndGet();
                     failureType.set(e.getClass().getSimpleName());
+                    System.err.println("Unexpected exception in thread " + threadNum + ": " + e.getMessage());
+                    e.printStackTrace();
                 } finally {
                     endLatch.countDown();
                 }
@@ -205,7 +286,7 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
         assertThat(failureCount.get()).isEqualTo(threadCount - 1);
         
         // Check final state
-        Ticket finalTicket = ticketRepository.findById(testTicket.getId()).orElseThrow();
+        Ticket finalTicket = ticketRepository.findById(ticketId).orElseThrow();
         System.out.println("Final ticket version: " + finalTicket.getVersion());
         assertThat(finalTicket.getVersion()).isEqualTo(1L);
     }
@@ -214,10 +295,12 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
     public void testReadThenWritePattern() {
         logTestContext("Read-Then-Write Pattern Test");
         
-        // Common pattern: read, process, update
+        Long ticketId = testTicket.getId();
+        
+        // Common pattern: read, process, update - all within same transaction
         transactionTemplate.execute(status -> {
             // Read
-            Ticket ticket = ticketRepository.findById(testTicket.getId()).orElseThrow();
+            Ticket ticket = ticketRepository.findById(ticketId).orElseThrow();
             System.out.println("Read ticket with version: " + ticket.getVersion());
             
             // Simulate processing time
@@ -231,13 +314,14 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
             
             // Write
             ticketRepository.save(ticket);
-            System.out.println("Updated ticket, new version will be: " + (ticket.getVersion() + 1));
+            entityManager.flush();
+            System.out.println("Updated ticket, new version: " + ticket.getVersion());
             
             return null;
         });
         
         // Verify
-        Ticket updated = ticketRepository.findById(testTicket.getId()).orElseThrow();
+        Ticket updated = ticketRepository.findById(ticketId).orElseThrow();
         assertThat(updated.getVersion()).isEqualTo(1L);
         assertThat(updated.getStatus()).isEqualTo(Ticket.TicketStatus.IN_PROGRESS);
     }
@@ -251,21 +335,38 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
         assertThat(newTicket.getVersion()).isEqualTo(0L);
         
         Ticket saved = ticketRepository.save(newTicket);
+        entityManager.flush();
         assertThat(saved.getVersion()).isEqualTo(0L);
         
-        // Test 2: Version increments on update
-        saved.setDescription("Updated description");
-        Ticket updated = ticketRepository.save(saved);
-        assertThat(updated.getVersion()).isEqualTo(1L);
+        // Test 2: Version increments on update within managed context
+        transactionTemplate.execute(status -> {
+            Ticket managed = entityManager.find(Ticket.class, saved.getId());
+            managed.setDescription("Updated description");
+            entityManager.flush();
+            assertThat(managed.getVersion()).isEqualTo(1L);
+            return null;
+        });
         
         // Test 3: No version change on read
-        Ticket read = ticketRepository.findById(updated.getId()).orElseThrow();
+        Ticket read = ticketRepository.findById(saved.getId()).orElseThrow();
         assertThat(read.getVersion()).isEqualTo(1L);
         
-        // Test 4: Version is checked on save
-        saved.setVersion(0L); // Simulate stale version
+        // Test 4: Version is checked on save with stale version
         assertThrows(OptimisticLockingFailureException.class, () -> {
-            ticketRepository.save(saved);
+            transactionTemplate.execute(status -> {
+                // Create entity with stale version
+                Ticket staleEntity = new Ticket();
+                staleEntity.setId(saved.getId());
+                staleEntity.setVersion(0L); // Stale version
+                staleEntity.setTitle("Stale update");
+                staleEntity.setDescription("This should fail");
+                staleEntity.setReporter(user1);
+                staleEntity.setProject(project1);
+                
+                entityManager.merge(staleEntity);
+                entityManager.flush();
+                return null;
+            });
         });
         
         System.out.println("Version field behavior verified");

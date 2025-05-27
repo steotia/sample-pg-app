@@ -231,4 +231,14 @@ public class Ticket {
         this.version = version;
     }
 
+    @PreUpdate
+    public void preUpdate() {
+        System.out.println("About to update ticket " + id + ", current version: " + version);
+    }
+
+    @PostUpdate  
+    public void postUpdate() {
+        System.out.println("Updated ticket " + id + ", new version: " + version);
+    }
+
 }
