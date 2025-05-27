@@ -241,4 +241,43 @@ public class Ticket {
         System.out.println("Updated ticket " + id + ", new version: " + version);
     }
 
+    // Phase - FK - constraints
+
+    // Add relationship with Sprint
+    @ManyToMany(mappedBy = "tickets")
+    private Set<Sprint> sprints = new HashSet<>();
+
+    // Add relationship with WorkLog
+    @OneToMany(mappedBy = "ticket", cascade = CascadeType.ALL, orphanRemoval = true)
+    private Set<WorkLog> workLogs = new HashSet<>();
+
+    // Add helper methods for WorkLog
+    public void addWorkLog(WorkLog workLog) {
+        this.workLogs.add(workLog);
+        workLog.setTicket(this);
+    }
+
+    public void removeWorkLog(WorkLog workLog) {
+        this.workLogs.remove(workLog);
+        workLog.setTicket(null);
+    }
+
+    // Add getter/setter for sprints
+    public Set<Sprint> getSprints() {
+        return sprints;
+    }
+
+    public void setSprints(Set<Sprint> sprints) {
+        this.sprints = sprints;
+    }
+
+    // Add getter/setter for workLogs
+    public Set<WorkLog> getWorkLogs() {
+        return workLogs;
+    }
+
+    public void setWorkLogs(Set<WorkLog> workLogs) {
+        this.workLogs = workLogs;
+    }
+
 }

@@ -2,6 +2,7 @@ package com.trials.crdb.app.transaction;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,13 +27,18 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import com.trials.crdb.app.model.Project;
 import com.trials.crdb.app.model.Ticket;
+import com.trials.crdb.app.model.User;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
+
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 @Testcontainers
 @DataJpaTest
@@ -249,8 +255,26 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
     }
     
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void testConcurrentUpdates() throws Exception {
         logTestContext("Concurrent Updates Test");
+        
+        // TOIL - @Transactional(propagation = Propagation.NOT_SUPPORTED) prevents @BeforeEach from working
+        // WORKAROUND - Handle all setup within the test method using transactionTemplate
+        Long ticketId = transactionTemplate.execute(status -> {
+            // Clean and recreate test data
+            ticketRepository.deleteAll();
+            userRepository.deleteAll();
+            projectRepository.deleteAll();
+            
+            User testUser = userRepository.save(new User("john", "john@example.com", "John Doe"));
+            User testUser2 = userRepository.save(new User("jane", "jane@example.com", "Jane Doe"));
+            Project testProject = projectRepository.save(new Project("Test Project", "Transaction Testing"));
+            
+            Ticket ticket = new Ticket("Concurrent Test Ticket", "For concurrent testing", testUser, testProject);
+            Ticket saved = ticketRepository.save(ticket);
+            return saved.getId();
+        });
         
         int threadCount = 5;
         CountDownLatch startLatch = new CountDownLatch(1);
@@ -260,24 +284,20 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
         AtomicReference<String> failureType = new AtomicReference<>();
         
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-        Long ticketId = testTicket.getId();
         
         for (int i = 0; i < threadCount; i++) {
             final int threadNum = i;
             executor.submit(() -> {
                 try {
-                    startLatch.await(); // Wait for signal to start
+                    startLatch.await();
                     
-                    // Create a new transaction template for each thread
                     TransactionTemplate threadTransactionTemplate = new TransactionTemplate(transactionManager);
                     
                     threadTransactionTemplate.execute(status -> {
-                        // Load fresh entity within this transaction
                         Ticket ticket = ticketRepository.findById(ticketId).orElseThrow();
                         ticket.setPriority(Ticket.TicketPriority.HIGH);
                         ticket.setDescription("Updated by thread " + threadNum);
                         ticketRepository.save(ticket);
-                        entityManager.flush(); // Force immediate flush
                         return null;
                     });
                     
@@ -296,26 +316,18 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
             });
         }
         
-        // Start all threads at once
         startLatch.countDown();
-        
-        // Wait for all to complete
         endLatch.await();
         executor.shutdown();
         
-        // Results
         System.out.println("Concurrent update results:");
         System.out.println("- Success count: " + successCount.get());
         System.out.println("- Failure count: " + failureCount.get());
         System.out.println("- Failure type: " + failureType.get());
         
-        // In PostgreSQL with optimistic locking:
-        // - Only 1 should succeed
-        // - Others should fail with OptimisticLockingFailureException
         assertThat(successCount.get()).isEqualTo(1);
         assertThat(failureCount.get()).isEqualTo(threadCount - 1);
         
-        // Check final state
         Ticket finalTicket = ticketRepository.findById(ticketId).orElseThrow();
         System.out.println("Final ticket version: " + finalTicket.getVersion());
         assertThat(finalTicket.getVersion()).isEqualTo(1L);
@@ -382,7 +394,26 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
         assertThat(read.getVersion()).isEqualTo(1L);
         
         // Test 4: Version is checked on save with stale version
-        assertThrows(OptimisticLockingFailureException.class, () -> {
+        // TOIL - Different databases may throw different exception types
+        // assertThrows(OptimisticLockingFailureException.class, () -> {
+        //     transactionTemplate.execute(status -> {
+        //         // Create entity with stale version
+        //         Ticket staleEntity = new Ticket();
+        //         staleEntity.setId(saved.getId());
+        //         staleEntity.setVersion(0L); // Stale version
+        //         staleEntity.setTitle("Stale update");
+        //         staleEntity.setDescription("This should fail");
+        //         staleEntity.setReporter(user1);
+        //         staleEntity.setProject(project1);
+        //         
+        //         entityManager.merge(staleEntity);
+        //         entityManager.flush();
+        //         return null;
+        //     });
+        // });
+        
+        // WORKAROUND - Handle both Spring and JPA exception types
+        Exception exception = assertThrows(Exception.class, () -> {
             transactionTemplate.execute(status -> {
                 // Create entity with stale version
                 Ticket staleEntity = new Ticket();
@@ -398,6 +429,15 @@ public class OptimisticLockingPostgresTests extends TransactionTestBase {
                 return null;
             });
         });
+        
+        // Verify it's an optimistic lock exception (either Spring or JPA type)
+        boolean isOptimisticLockException = exception instanceof OptimisticLockingFailureException ||
+                                          exception instanceof jakarta.persistence.OptimisticLockException ||
+                                          exception.getCause() instanceof jakarta.persistence.OptimisticLockException;
+        
+        assertThat(isOptimisticLockException)
+            .withFailMessage("Expected optimistic lock exception, but got: " + exception.getClass().getName())
+            .isTrue();
         
         System.out.println("Version field behavior verified");
     }
