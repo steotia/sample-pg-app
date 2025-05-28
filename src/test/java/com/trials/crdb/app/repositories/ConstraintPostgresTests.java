@@ -126,8 +126,12 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         ticket2.setStatus(Ticket.TicketStatus.IN_PROGRESS);
         ticket2.setPriority(Ticket.TicketPriority.MEDIUM);
         
-        ticketRepository.save(ticket1);
-        ticketRepository.save(ticket2);
+        // Save tickets and log IDs
+        ticket1 = ticketRepository.save(ticket1);
+        ticket2 = ticketRepository.save(ticket2);
+        
+        System.out.println("Ticket1 ID after save: " + ticket1.getId());
+        System.out.println("Ticket2 ID after save: " + ticket2.getId());
         
         // Create sprint
         sprint1 = new Sprint(
@@ -139,12 +143,13 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         );
         sprintRepository.save(sprint1);
         
-        // Add tickets to sprint
-        sprint1.addTicket(ticket1);
-        sprint1.addTicket(ticket2);
-        sprintRepository.save(sprint1);
+        // Add tickets to sprint - save this until after worklog creation
+        // sprint1.addTicket(ticket1);
+        // sprint1.addTicket(ticket2);
+        // sprintRepository.save(sprint1);
         
         // Create work log
+        System.out.println("Creating worklog with ticket ID: " + ticket1.getId());
         workLog1 = new WorkLog(
             ticket1,
             user1,
@@ -155,6 +160,11 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         );
         workLogRepository.save(workLog1);
         
+        // Now add tickets to sprint
+        sprint1.addTicket(ticket1);
+        sprint1.addTicket(ticket2);
+        sprintRepository.save(sprint1);
+        
         entityManager.flush();
     }
     
@@ -163,17 +173,68 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     //-------------------------------------------------------------------------
     
     @Test
+    public void testCreateWorkLog() {
+        // Create a new ticket that won't be involved in any other relationships
+        Ticket simpleTicket = new Ticket("Simple Ticket", "For testing worklogs", user1, project1);
+        simpleTicket = ticketRepository.saveAndFlush(simpleTicket);
+        
+        // Manually detach all entities to start with a clean state
+        entityManager.clear();
+        
+        // Reload the ticket to ensure it's in a managed state
+        Ticket managedTicket = ticketRepository.findById(simpleTicket.getId()).orElseThrow();
+        User managedUser = userRepository.findById(user1.getId()).orElseThrow();
+        
+        // Create a worklog using the helper method in Ticket
+        WorkLog testLog = new WorkLog();
+        testLog.setDescription("Test worklog");
+        testLog.setStartTime(baseTime);
+        testLog.setEndTime(baseTime.plusHours(1));
+        testLog.setHoursSpent(1.0);
+        testLog.setUser(managedUser);
+        testLog.setTicket(managedTicket);
+        
+        // Save the worklog directly
+        WorkLog savedLog = workLogRepository.saveAndFlush(testLog);
+        
+        // Verify it was saved correctly
+        assertThat(savedLog.getId()).isNotNull();
+        
+        // Verify the relationship works in both directions
+        Ticket fetchedTicket = ticketRepository.findById(managedTicket.getId()).orElseThrow();
+        assertThat(fetchedTicket.getWorkLogs()).hasSize(1);
+    }
+
+    @Test
     public void testCascadeDeleteFromTicketToWorkLog() {
-        // Get the current count of work logs
-        long initialWorkLogCount = workLogRepository.count();
+        // Create a dedicated ticket just for this test
+        Ticket testTicket = new Ticket("Cascade Test Ticket", "For testing cascade delete", user1, project1);
+        testTicket = ticketRepository.save(testTicket);
+        Long ticketId = testTicket.getId();
         
-        // Delete a ticket with work logs
-        ticketRepository.delete(ticket1);
+        // Create a work log
+        WorkLog testLog = new WorkLog();
+        testLog.setDescription("Test log for cascade delete");
+        testLog.setStartTime(baseTime);
+        testLog.setEndTime(baseTime.plusHours(1));
+        testLog.setHoursSpent(1.0);
+        testLog.setUser(user1);
+        testLog.setTicket(testTicket);
+        workLogRepository.save(testLog);
+        Long workLogId = testLog.getId();
+        
+        // Clear persistence context to ensure we're starting fresh
         entityManager.flush();
+        entityManager.clear();
         
-        // Verify that the associated work logs are also deleted
-        long finalWorkLogCount = workLogRepository.count();
-        assertThat(finalWorkLogCount).isEqualTo(initialWorkLogCount - 1);
+        // Verify the work log exists
+        assertThat(workLogRepository.existsById(workLogId)).isTrue();
+        
+        // Delete the ticket by ID - avoiding entity references completely
+        ticketRepository.deleteById(ticketId);
+        
+        // Verify the work log was deleted
+        assertThat(workLogRepository.existsById(workLogId)).isFalse();
     }
     
     @Test

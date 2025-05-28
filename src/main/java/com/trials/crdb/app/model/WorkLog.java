@@ -20,7 +20,9 @@ public class WorkLog {
     private Long id;
     
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "ticket_id", nullable = false)
+    @JoinColumn(name = "ticket_id", nullable = false, 
+            foreignKey = @ForeignKey(name = "fk_worklog_ticket", 
+                                    foreignKeyDefinition = "FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE"))
     private Ticket ticket;
     
     @ManyToOne(fetch = FetchType.LAZY)
