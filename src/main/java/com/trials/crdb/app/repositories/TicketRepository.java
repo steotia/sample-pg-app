@@ -361,4 +361,6 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
     // Step 2: Get tag count for a specific ticket (separate query)
     @Query(value = "SELECT array_length(tags, 1) FROM tickets WHERE id = ?1", nativeQuery = true)
     Integer getTagCountForTicket(Long ticketId);
+
+    List<Ticket> findByDependentOn(Ticket dependentOn);
 }

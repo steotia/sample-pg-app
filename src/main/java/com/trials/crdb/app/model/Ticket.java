@@ -1,5 +1,6 @@
 package com.trials.crdb.app.model;
 
+import org.hibernate.annotations.Check;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -24,6 +25,7 @@ import com.trials.crdb.app.utils.DateTimeProvider;
 @Table(name = "tickets")
 @Getter
 @Setter
+// @Check(constraints = "estimated_hours >= 0 AND (due_date IS NULL OR due_date > create_time)")
 public class Ticket {
 
     public enum TicketStatus {
@@ -57,7 +59,9 @@ public class Ticket {
     private Map<String, Object> metadata = new HashMap<>();
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "assignee_id")
+    @JoinColumn(name = "assignee_id", 
+            foreignKey = @ForeignKey(name = "fk_ticket_assignee",
+                       foreignKeyDefinition = "FOREIGN KEY (assignee_id) REFERENCES users(id) ON DELETE SET NULL"))
     private User assignee;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -65,7 +69,9 @@ public class Ticket {
     private User reporter;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "project_id", nullable = false)
+    @JoinColumn(name = "project_id", nullable = false,
+                foreignKey = @ForeignKey(name = "fk_ticket_project", 
+                        foreignKeyDefinition = "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT"))
     private Project project;
 
     @CreationTimestamp
@@ -104,11 +110,12 @@ public class Ticket {
 
     // PHASE - add temporal fields
 
-    // Add these fields to the Ticket class
     @Column
+    @Check(constraints = "due_date IS NULL OR due_date > create_time")
     private ZonedDateTime dueDate;
 
     @Column
+    @Check(constraints = "estimated_hours >= 0")
     private Double estimatedHours;
 
     @Column

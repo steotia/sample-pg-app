@@ -34,7 +34,9 @@ public class Sprint {
     private ZonedDateTime endDate;
     
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "project_id", nullable = false)
+    @JoinColumn(name = "project_id", nullable = false,
+                foreignKey = @ForeignKey(name = "fk_sprint_project", 
+                            foreignKeyDefinition = "FOREIGN KEY (project_id) REFERENCES projects(id) ON UPDATE CASCADE"))
     private Project project;
     
     @ManyToMany

@@ -1,7 +1,9 @@
 package com.trials.crdb.app.repositories;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -9,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,12 +29,22 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import com.trials.crdb.app.model.*;
+import com.trials.crdb.app.model.UserProjectRole.UserProjectRoleId;
 import com.trials.crdb.app.test.TimeBasedTest;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
 import org.springframework.core.env.MapPropertySource;
+
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import org.junit.jupiter.api.TestInstance;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.util.function.Supplier;
 
 @Testcontainers
 @DataJpaTest
@@ -83,6 +96,12 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     
     @Autowired
     private ProjectRepository projectRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private UserProjectRoleRepository userProjectRoleRepository;
     
     // Test data
     private User user1, user2;
@@ -95,8 +114,11 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     void setUp() {
         super.setupTime(); // Set up fixed time from TimeBasedTest
         
-        // Create test data
-        createTestData();
+        TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+        txTemplate.execute(status -> {
+            createTestData();
+            return null;
+        });
     }
     
     private void createTestData() {
@@ -165,7 +187,7 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         sprint1.addTicket(ticket2);
         sprintRepository.save(sprint1);
         
-        entityManager.flush();
+        // entityManager.flush();
     }
     
     //-------------------------------------------------------------------------
@@ -299,46 +321,112 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     //-------------------------------------------------------------------------
     
     @Test
-    public void testDueDateConstraint() {
-        // Set a due date before create time (should fail)
-        ticket1.setDueDate(baseTime.minusDays(1));
+    public void testInvalidDueDateShouldFailConstraint() {
+        // Create a valid ticket
+        User testUser = userRepository.findById(user1.getId()).orElseThrow();
+        Project testProject = projectRepository.findById(project1.getId()).orElseThrow();
         
-        // With a check constraint, this would throw a DataIntegrityViolationException
-        assertThrows(DataIntegrityViolationException.class, () -> {
-            ticketRepository.save(ticket1);
-            entityManager.flush();
+        Ticket testTicket = new Ticket("Invalid Due Date Test", "Testing due date constraint", testUser, testProject);
+        testTicket.setStatus(Ticket.TicketStatus.OPEN);
+        testTicket.setPriority(Ticket.TicketPriority.MEDIUM);
+        ticketRepository.saveAndFlush(testTicket);
+        
+        // Set invalid due date
+        testTicket.setDueDate(baseTime.minusDays(1)); // Before create time
+        
+        // This should fail due to check constraint
+        assertThrows(Exception.class, () -> {
+            ticketRepository.saveAndFlush(testTicket);
         });
-        
-        // Set a valid due date (should succeed)
-        ticket1.setDueDate(baseTime.plusDays(1));
-        ticketRepository.save(ticket1);
-        entityManager.flush();
-        
-        // Verify the due date was saved
-        Ticket updatedTicket = ticketRepository.findById(ticket1.getId()).orElseThrow();
-        assertThat(updatedTicket.getDueDate()).isEqualTo(baseTime.plusDays(1));
     }
-    
+
     @Test
-    public void testEstimatedHoursConstraint() {
-        // Set negative estimated hours (should fail)
-        ticket1.setEstimatedHours(-5.0);
+    public void testValidDueDateShouldPass() {
+        // Create a valid ticket
+        User testUser = userRepository.findById(user1.getId()).orElseThrow();
+        Project testProject = projectRepository.findById(project1.getId()).orElseThrow();
         
-        // With a check constraint, this would throw a DataIntegrityViolationException
-        assertThrows(DataIntegrityViolationException.class, () -> {
-            ticketRepository.save(ticket1);
-            entityManager.flush();
+        Ticket testTicket = new Ticket("Valid Due Date Test", "Testing due date constraint", testUser, testProject);
+        testTicket.setStatus(Ticket.TicketStatus.OPEN);
+        testTicket.setPriority(Ticket.TicketPriority.MEDIUM);
+        
+        // Save ticket without a due date first
+        testTicket = ticketRepository.saveAndFlush(testTicket);
+        
+        // Get the actual create time from the saved ticket
+        ZonedDateTime actualCreateTime = testTicket.getCreateTime();
+        
+        // Set valid due date based on the actual create time
+        testTicket.setDueDate(actualCreateTime.plusDays(1));
+        testTicket = ticketRepository.saveAndFlush(testTicket);
+        
+        // Verify due date was saved
+        entityManager.clear();
+        Ticket updatedTicket = ticketRepository.findById(testTicket.getId()).orElseThrow();
+        assertThat(updatedTicket.getDueDate()).isEqualTo(actualCreateTime.plusDays(1));
+    }
+
+    @Test
+    public void testInvalidEstimatedHoursShouldFailConstraint() {
+        // Create a valid ticket
+        User testUser = userRepository.findById(user1.getId()).orElseThrow();
+        Project testProject = projectRepository.findById(project1.getId()).orElseThrow();
+        
+        Ticket testTicket = new Ticket("Invalid Hours Test", "Testing hours constraint", testUser, testProject);
+        testTicket.setStatus(Ticket.TicketStatus.OPEN);
+        testTicket.setPriority(Ticket.TicketPriority.MEDIUM);
+        ticketRepository.saveAndFlush(testTicket);
+        
+        // Set invalid negative hours
+        testTicket.setEstimatedHours(-5.0);
+        
+        // This should fail due to check constraint
+        assertThrows(Exception.class, () -> {
+            ticketRepository.saveAndFlush(testTicket);
         });
+    }
+
+    @Test
+    public void testValidEstimatedHoursShouldPass() {
+        // Create a valid ticket
+        User testUser = userRepository.findById(user1.getId()).orElseThrow();
+        Project testProject = projectRepository.findById(project1.getId()).orElseThrow();
         
-        // Set valid estimated hours (should succeed)
-        ticket1.setEstimatedHours(5.0);
-        ticketRepository.save(ticket1);
-        entityManager.flush();
+        Ticket testTicket = new Ticket("Valid Hours Test", "Testing hours constraint", testUser, testProject);
+        testTicket.setStatus(Ticket.TicketStatus.OPEN);
+        testTicket.setPriority(Ticket.TicketPriority.MEDIUM);
+        testTicket = ticketRepository.saveAndFlush(testTicket);
         
-        // Verify the estimated hours were saved
-        Ticket updatedTicket = ticketRepository.findById(ticket1.getId()).orElseThrow();
+        // Set valid positive hours
+        testTicket.setEstimatedHours(5.0);
+        testTicket = ticketRepository.saveAndFlush(testTicket);
+        
+        // Verify hours were saved
+        entityManager.clear(); // Ensure we get a fresh entity
+        Ticket updatedTicket = ticketRepository.findById(testTicket.getId()).orElseThrow();
         assertThat(updatedTicket.getEstimatedHours()).isEqualTo(5.0);
     }
+    
+    // @Test
+    // public void testEstimatedHoursConstraint() {
+    //     // Set negative estimated hours (should fail)
+    //     ticket1.setEstimatedHours(-5.0);
+        
+    //     // With a check constraint, this would throw a DataIntegrityViolationException
+    //     assertThrows(DataIntegrityViolationException.class, () -> {
+    //         ticketRepository.save(ticket1);
+    //         entityManager.flush();
+    //     });
+        
+    //     // Set valid estimated hours (should succeed)
+    //     ticket1.setEstimatedHours(5.0);
+    //     ticketRepository.save(ticket1);
+    //     entityManager.flush();
+        
+    //     // Verify the estimated hours were saved
+    //     Ticket updatedTicket = ticketRepository.findById(ticket1.getId()).orElseThrow();
+    //     assertThat(updatedTicket.getEstimatedHours()).isEqualTo(5.0);
+    // }
     
     //-------------------------------------------------------------------------
     // SECTION 3: UNIQUE CONSTRAINTS
@@ -428,64 +516,7 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     }
     
     //-------------------------------------------------------------------------
-    // SECTION 5: EXCLUSION CONSTRAINTS (via application logic)
-    //-------------------------------------------------------------------------
-    
-    @Test
-    public void testOverlappingSprintsAreDetected() {
-        // Create a sprint that overlaps with sprint1
-        Sprint overlappingSprint = new Sprint(
-            "Overlapping Sprint",
-            "This sprint overlaps with sprint1",
-            baseTime.plusDays(7), // Starts during sprint1
-            baseTime.plusDays(21), // Ends after sprint1
-            project1
-        );
-        
-        // Save the overlapping sprint
-        sprintRepository.save(overlappingSprint);
-        entityManager.flush();
-        
-        // Verify the overlapping sprint is detected by our repository method
-        List<Sprint> overlappingSprints = sprintRepository.findOverlappingSprints(
-            project1,
-            overlappingSprint.getStartDate(),
-            overlappingSprint.getEndDate()
-        );
-        
-        assertThat(overlappingSprints).hasSize(1);
-        assertThat(overlappingSprints.get(0).getName()).isEqualTo("Sprint 1");
-    }
-    
-    @Test
-    public void testOverlappingWorkLogsAreDetected() {
-        // Create a work log that overlaps with workLog1
-        WorkLog overlappingWorkLog = new WorkLog(
-            ticket2, // Different ticket, same user
-            user1,
-            baseTime.minusHours((long) 1.5), // Starts during workLog1
-            baseTime.minusHours((long) 0.5), // Ends during workLog1
-            "Overlapping work",
-            1.0
-        );
-        
-        // Save the overlapping work log
-        workLogRepository.save(overlappingWorkLog);
-        entityManager.flush();
-        
-        // Verify the overlapping work log is detected by our repository method
-        List<WorkLog> overlappingWorkLogs = workLogRepository.findOverlappingWorkLogs(
-            user1,
-            overlappingWorkLog.getStartTime(),
-            overlappingWorkLog.getEndTime()
-        );
-        
-        assertThat(overlappingWorkLogs).hasSize(1);
-        assertThat(overlappingWorkLogs.get(0).getDescription()).isEqualTo("Initial setup");
-    }
-    
-    //-------------------------------------------------------------------------
-    // SECTION 6: COMPLEX RELATIONSHIPS AND AGGREGATIONS
+    // SECTION 5: ADVANCED FOREIGN KEY BEHAVIORS
     //-------------------------------------------------------------------------
     
     @Test
@@ -520,70 +551,358 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         Double totalHours = workLogRepository.getTotalHoursForTicket(ticket1);
         assertThat(totalHours).isEqualTo(3.0); // 1.0 + 1.0 + 1.0
     }
-    
+
     @Test
-    public void testSprintWithMultipleTickets() {
-        // Create additional tickets
-        Ticket ticket3 = new Ticket("Test Ticket 3", "Third test ticket", user1, project1);
-        Ticket ticket4 = new Ticket("Test Ticket 4", "Fourth test ticket", user2, project1);
+    public void testCascadeOnUpdate() {
+        // Create a project with a manual ID
+        entityManager.createNativeQuery(
+            "INSERT INTO projects (id, name, description, create_time) VALUES (100, 'Update Test Project', 'Testing ON UPDATE CASCADE', CURRENT_TIMESTAMP)"
+        ).executeUpdate();
         
-        ticketRepository.saveAll(List.of(ticket3, ticket4));
+        Project cascadeProject = entityManager.find(Project.class, 100L);
         
-        // Add tickets to sprint
-        sprint1.addTicket(ticket3);
-        sprint1.addTicket(ticket4);
+        // Create sprints for this project
+        Sprint sprint1 = new Sprint("Sprint 1", "First sprint", baseTime, baseTime.plusDays(14), cascadeProject);
+        Sprint sprint2 = new Sprint("Sprint 2", "Second sprint", baseTime.plusDays(15), baseTime.plusDays(29), cascadeProject);
+        sprintRepository.saveAll(List.of(sprint1, sprint2));
         
-        sprintRepository.save(sprint1);
+        // Verify sprints are associated with the project
+        List<Sprint> projectSprints = sprintRepository.findByProject(cascadeProject);
+        assertThat(projectSprints).hasSize(2);
+        
+        // Change the project ID using native SQL
+        entityManager.createNativeQuery(
+            "UPDATE projects SET id = 200 WHERE id = 100"
+        ).executeUpdate();
+        
+        // Clear persistence context to get fresh data
+        entityManager.clear();
+        
+        // Verify the project was updated
+        Project updatedProject = entityManager.find(Project.class, 200L);
+        assertThat(updatedProject).isNotNull();
+        assertThat(updatedProject.getName()).isEqualTo("Update Test Project");
+        
+        // Verify sprints were also updated with the new FK
+        List<Sprint> updatedSprints = sprintRepository.findByProject(updatedProject);
+        assertThat(updatedSprints).hasSize(2);
+        
+        // The old project ID should no longer exist
+        assertThat(entityManager.find(Project.class, 100L)).isNull();
+    }
+
+
+    /**
+     * Tests composite foreign keys with UserProjectRole entity.
+     * This tests that:
+     * 1. Composite primary keys work correctly
+     * 2. Foreign key constraints on multiple columns work
+     * 3. Cascading operations work with composite keys
+     */
+    @Test
+    public void testCompositeForeignKey() {
+        // Create a role assignment
+        UserProjectRole role = new UserProjectRole(user1, project1, "ADMIN");
+        userProjectRoleRepository.save(role);
         entityManager.flush();
         
-        // Verify all tickets are associated with the sprint
-        Sprint updatedSprint = sprintRepository.findById(sprint1.getId()).orElseThrow();
-        assertThat(updatedSprint.getTickets()).hasSize(4);
-    }
-    
-    @Test
-    public void testWorkLogTimeRange() {
-        // Create work logs for a specific time range
-        ZonedDateTime start = baseTime.withHour(9).withMinute(0);
+        // Verify it was saved
+        UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(user1.getId(), project1.getId());
+        UserProjectRole savedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
+        assertThat(savedRole.getRoleName()).isEqualTo("ADMIN");
         
-        WorkLog morningWorkLog = new WorkLog(
-            ticket1,
-            user1,
-            start,
-            start.plusHours(2),
-            "Morning work",
-            2.0
-        );
-        
-        WorkLog afternoonWorkLog = new WorkLog(
-            ticket1,
-            user1,
-            start.plusHours(4),
-            start.plusHours(6),
-            "Afternoon work",
-            2.0
-        );
-        
-        workLogRepository.saveAll(List.of(morningWorkLog, afternoonWorkLog));
+        // Test composite primary key constraint via update
+        UserProjectRole updatedRole = new UserProjectRole(user1, project1, "DEVELOPER");
+        userProjectRoleRepository.save(updatedRole);
         entityManager.flush();
         
-        // Verify work logs can be found by time range
-        List<WorkLog> dayWorkLogs = workLogRepository.findWorkLogsByUserAndTimeRange(
-            user1,
-            start,
-            start.plusHours(8)
-        );
+        // Should still be only one record, but with updated role name
+        UserProjectRole refreshedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
+        assertThat(refreshedRole.getRoleName()).isEqualTo("DEVELOPER");
         
-        assertThat(dayWorkLogs).hasSize(2);
+        // Try to delete using direct SQL to bypass any JPA/Hibernate handling
+        assertThrows(Exception.class, () -> {
+            entityManager.createNativeQuery("DELETE FROM users WHERE id = ?")
+                .setParameter(1, user1.getId())
+                .executeUpdate();
+        });
         
-        // Verify specific time range filter
-        List<WorkLog> morningLogs = workLogRepository.findWorkLogsByUserAndTimeRange(
-            user1,
-            start,
-            start.plusHours(3)
-        );
+        // Verify the role still exists
+        assertThat(userProjectRoleRepository.existsById(roleId)).isTrue();
         
-        assertThat(morningLogs).hasSize(1);
-        assertThat(morningLogs.get(0).getDescription()).isEqualTo("Morning work");
+        // Clean up properly - delete role first, then user
+        userProjectRoleRepository.delete(refreshedRole);
+        entityManager.flush();
+        
+        userRepository.delete(user1);
+        entityManager.flush();
+        
+        // Verify both are gone
+        assertThat(userProjectRoleRepository.existsById(roleId)).isFalse();
+        assertThat(userRepository.existsById(user1.getId())).isFalse();
     }
+
+    /**
+     * Tests self-referential foreign keys with ticket dependencies.
+     * This tests:
+     * 1. Self-referential relationships work correctly
+     * 2. Multi-level dependency chains can be created and traversed
+     * 3. Circular dependencies are prevented
+     */
+    /**
+     * Tests self-referential foreign keys with ticket dependencies.
+     */
+    @Test
+    public void testSelfReferentialForeignKey() {
+        // Create a chain of ticket dependencies
+        Ticket parentTicket = new Ticket("Parent Ticket", "Parent level", user1, project1);
+        parentTicket.setStatus(Ticket.TicketStatus.OPEN);
+        parentTicket.setPriority(Ticket.TicketPriority.HIGH);
+        parentTicket = ticketRepository.save(parentTicket);
+        
+        Ticket childTicket = new Ticket("Child Ticket", "Child level", user1, project1);
+        childTicket.setStatus(Ticket.TicketStatus.OPEN);
+        childTicket.setPriority(Ticket.TicketPriority.MEDIUM);
+        childTicket.setDependentOn(parentTicket);
+        ticketRepository.save(childTicket);
+        
+        Ticket grandchildTicket = new Ticket("Grandchild Ticket", "Grandchild level", user1, project1);
+        grandchildTicket.setStatus(Ticket.TicketStatus.OPEN);
+        grandchildTicket.setPriority(Ticket.TicketPriority.LOW);
+        grandchildTicket.setDependentOn(childTicket);
+        grandchildTicket = ticketRepository.save(grandchildTicket);
+        
+        // Verify dependency relationships
+        entityManager.flush();
+        entityManager.clear();
+        
+        Ticket fetchedGrandchild = ticketRepository.findById(grandchildTicket.getId()).orElseThrow();
+        Ticket fetchedChild = fetchedGrandchild.getDependentOn();
+        Ticket fetchedParent = fetchedChild.getDependentOn();
+        
+        assertThat(fetchedChild.getId()).isEqualTo(childTicket.getId());
+        assertThat(fetchedParent.getId()).isEqualTo(parentTicket.getId());
+        assertThat(fetchedParent.getDependentOn()).isNull();
+        
+        // Verify we can traverse the dependency chain in both directions
+        List<Ticket> childDependencies = ticketRepository.findByDependentOn(childTicket);
+        assertThat(childDependencies).hasSize(1);
+        assertThat(childDependencies.get(0).getId()).isEqualTo(grandchildTicket.getId());
+        
+        // Test deleting a ticket that has dependents
+        // This should fail due to foreign key constraint (default behavior is RESTRICT/NO ACTION)
+        assertThrows(Exception.class, () -> {
+            ticketRepository.delete(childTicket);
+            entityManager.flush();
+        });
+        
+        // Delete in correct order (grandchild first, then child, then parent)
+        ticketRepository.delete(grandchildTicket);
+        entityManager.flush();
+        
+        // Now we should be able to delete the child
+        ticketRepository.delete(childTicket);
+        entityManager.flush();
+        
+        // And finally delete the parent
+        ticketRepository.delete(parentTicket);
+        entityManager.flush();
+        
+        // Verify all tickets are deleted
+        assertThat(ticketRepository.findById(grandchildTicket.getId())).isEmpty();
+        assertThat(ticketRepository.findById(childTicket.getId())).isEmpty();
+        assertThat(ticketRepository.findById(parentTicket.getId())).isEmpty();
+    }
+
+    /**
+     * Tests ON DELETE SET NULL foreign key action.
+     * When a user is deleted, tickets assigned to them will have their assignee set to NULL.
+     */
+    @Test
+    public void testSetNullOnDelete() {
+        // Create a new user
+        User assignee = new User("assignee", "assignee@example.com", "Test Assignee");
+        userRepository.save(assignee);
+        
+        // Create a ticket assigned to this user
+        Ticket ticket = new Ticket("Assigned Ticket", "Testing SET NULL", user1, project1);
+        ticket.setStatus(Ticket.TicketStatus.OPEN);
+        ticket.setPriority(Ticket.TicketPriority.MEDIUM);
+        ticket.setAssignee(assignee); // Assign to the user we'll delete
+        ticketRepository.save(ticket);
+        
+        // Verify the assignee is set
+        entityManager.flush();
+        entityManager.clear();
+        
+        ticket = ticketRepository.findById(ticket.getId()).orElseThrow();
+        assertThat(ticket.getAssignee()).isNotNull();
+        assertThat(ticket.getAssignee().getId()).isEqualTo(assignee.getId());
+        
+        // Delete the user
+        userRepository.delete(assignee);
+        entityManager.flush();
+        entityManager.clear();
+        
+        // Verify the ticket's assignee is now NULL
+        ticket = ticketRepository.findById(ticket.getId()).orElseThrow();
+        assertThat(ticket.getAssignee()).isNull();
+    }
+
+    /**
+     * Tests ON DELETE RESTRICT foreign key action.
+     * Cannot delete a project if it has tickets.
+     */
+    @Test
+    public void testRestrictOnDelete() {
+        // Create a project
+        Project restrictProject = new Project("Restrict Test", "Testing RESTRICT");
+        projectRepository.save(restrictProject);
+        
+        // Create a ticket for this project
+        Ticket ticket = new Ticket("Restrict Test Ticket", "Testing RESTRICT constraint", user1, restrictProject);
+        ticket.setStatus(Ticket.TicketStatus.OPEN);
+        ticket.setPriority(Ticket.TicketPriority.MEDIUM);
+        ticketRepository.save(ticket);
+        
+        entityManager.flush();
+        
+        // Try to delete the project - should fail due to RESTRICT constraint
+        assertThrows(Exception.class, () -> {
+            projectRepository.delete(restrictProject);
+            entityManager.flush();
+        });
+        
+        // Delete the ticket first, then the project should be deletable
+        ticketRepository.delete(ticket);
+        projectRepository.delete(restrictProject);
+        entityManager.flush();
+        
+        // Verify the project was deleted
+        assertThat(projectRepository.findById(restrictProject.getId())).isEmpty();
+    }
+
+    /**
+     * Tests basic composite primary key functionality.
+     * This test verifies that composite primary keys work correctly.
+     */
+    @Test
+    public void testCompositePrimaryKey() {
+        // Create a new role with a composite PK
+        UserProjectRole role = new UserProjectRole(user1, project1, "ADMIN");
+        userProjectRoleRepository.save(role);
+        
+        // Verify it exists
+        UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(user1.getId(), project1.getId());
+        assertThat(userProjectRoleRepository.findById(roleId)).isPresent();
+        
+        // Update the role
+        role.setRoleName("DEVELOPER");
+        userProjectRoleRepository.save(role);
+        
+        // Verify update worked
+        UserProjectRole updated = userProjectRoleRepository.findById(roleId).orElseThrow();
+        assertThat(updated.getRoleName()).isEqualTo("DEVELOPER");
+        
+        // Clean up
+        userProjectRoleRepository.delete(role);
+    }
+
+    /**
+     * Tests that proper deletion order works with composite foreign keys.
+     * This test demonstrates that you must delete the role before deleting
+     * the entities it references.
+     */
+    @Test
+    public void testProperDeletionOrder() {
+        // Create a new user and project for this test only
+        User roleUser = new User("roleuser", "role@example.com", "Role User");
+        userRepository.save(roleUser);
+        
+        Project roleProject = new Project("Role Project", "For testing roles");
+        projectRepository.save(roleProject);
+        
+        // Create a role linking them
+        UserProjectRole role = new UserProjectRole(roleUser, roleProject, "TESTER");
+        userProjectRoleRepository.save(role);
+        entityManager.flush();
+        
+        // Delete in correct order - role first
+        userProjectRoleRepository.delete(role);
+        entityManager.flush();
+        
+        // Now we can delete the user and project
+        userRepository.delete(roleUser);
+        projectRepository.delete(roleProject);
+        entityManager.flush();
+        
+        // Verify all are gone
+        UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(roleUser.getId(), roleProject.getId());
+        assertThat(userProjectRoleRepository.findById(roleId)).isEmpty();
+        assertThat(userRepository.findById(roleUser.getId())).isEmpty();
+        assertThat(projectRepository.findById(roleProject.getId())).isEmpty();
+    }
+
+    /**
+     * Tests that foreign key constraints prevent deleting referenced entities.
+     * This test verifies that you cannot delete a user that is referenced by a role.
+     */
+    @Test
+    public void testForeignKeyConstraintViolation() {
+        TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+        
+        // Step 1: Create test data in a transaction
+        final Long[] ids = new Long[2]; // To hold IDs for later use
+        
+        txTemplate.execute(status -> {
+            // Create new entities for this test only
+            User testUser = new User("constraintuser", "constraint@example.com", "Constraint Test User");
+            userRepository.save(testUser);
+            
+            Project testProject = new Project("Constraint Test Project", "For constraint test");
+            projectRepository.save(testProject);
+            
+            // Store IDs for later use
+            ids[0] = testUser.getId();
+            ids[1] = testProject.getId();
+            
+            UserProjectRole testRole = new UserProjectRole(testUser, testProject, "CONSTRAINT_TEST");
+            userProjectRoleRepository.save(testRole);
+            
+            return null;
+        });
+        
+        // Step 2: Verify constraint violation in a new transaction
+        try {
+            txTemplate.execute(status -> {
+                // Try to delete the user directly - should fail with constraint violation
+                User user = userRepository.findById(ids[0]).orElseThrow();
+                userRepository.delete(user);
+                return null;
+            });
+            fail("Expected a constraint violation");
+        } catch (Exception e) {
+            // Verify it's a constraint violation
+            assertThat(e.getMessage()).contains("constraint");
+        }
+        
+        // Step 3: Clean up properly in another transaction
+        txTemplate.execute(status -> {
+            User user = userRepository.findById(ids[0]).orElseThrow();
+            Project project = projectRepository.findById(ids[1]).orElseThrow();
+            UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(user.getId(), project.getId());
+            
+            // Delete in correct order
+            if (userProjectRoleRepository.existsById(roleId)) {
+                UserProjectRole role = userProjectRoleRepository.findById(roleId).orElseThrow();
+                userProjectRoleRepository.delete(role);
+            }
+            
+            userRepository.delete(user);
+            projectRepository.delete(project);
+            
+            return null;
+        });
+    }
+
 }

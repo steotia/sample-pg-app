@@ -9,6 +9,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.ManyToMany;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
@@ -46,6 +47,9 @@ public class Project {
 
     @ManyToMany(mappedBy = "projects", fetch = FetchType.LAZY)
     private Set<User> users = new HashSet<>();
+
+    @OneToMany(mappedBy = "project", fetch = FetchType.LAZY)
+    private Set<Ticket> tickets = new HashSet<>();
 
     public Project(){}
 
