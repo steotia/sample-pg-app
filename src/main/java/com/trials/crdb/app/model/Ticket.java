@@ -187,7 +187,9 @@ public class Ticket {
     // Phase
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "dependent_on_id")
+    @JoinColumn(name = "dependent_on_id",
+            foreignKey = @ForeignKey(name = "fk_ticket_dependency",
+                        foreignKeyDefinition = "FOREIGN KEY (dependent_on_id) REFERENCES tickets(id) ON DELETE RESTRICT"))
     private Ticket dependentOn;
 
     @OneToMany(mappedBy = "dependentOn")

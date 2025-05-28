@@ -25,7 +25,7 @@ import org.springframework.lang.NonNull;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.Rollback;
 import org.springframework.test.context.ContextConfiguration;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.CockroachContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
@@ -50,30 +50,28 @@ import java.util.function.Supplier;
 @Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ContextConfiguration(initializers = ConstraintPostgresTests.DataSourceInitializer.class)
-public class ConstraintPostgresTests extends TimeBasedTest {
+@ContextConfiguration(initializers = ConstraintCockroachDBTests.DataSourceInitializer.class)
+public class ConstraintCockroachDBTests extends TimeBasedTest {
 
     @Container
-    static final PostgreSQLContainer<?> postgresContainer = 
-        new PostgreSQLContainer<>(DockerImageName.parse("postgres:15-alpine"))
-            .withDatabaseName("test_constraints")
-            .withUsername("testuser")
-            .withPassword("testPass");
+    static final CockroachContainer cockroachContainer = 
+        new CockroachContainer(DockerImageName.parse("cockroachdb/cockroach:latest"))
+            .withCommand("start-single-node --insecure");
     
     static class DataSourceInitializer implements ApplicationContextInitializer<ConfigurableApplicationContext> {
         @Override
         public void initialize(@NonNull ConfigurableApplicationContext appContext) {
             Map<String, Object> properties = new HashMap<>();
-            properties.put("spring.datasource.url", postgresContainer.getJdbcUrl());
-            properties.put("spring.datasource.username", postgresContainer.getUsername());
-            properties.put("spring.datasource.password", postgresContainer.getPassword());
+            properties.put("spring.datasource.url", cockroachContainer.getJdbcUrl());
+            properties.put("spring.datasource.username", cockroachContainer.getUsername());
+            properties.put("spring.datasource.password", cockroachContainer.getPassword());
             properties.put("spring.datasource.driver-class-name", "org.postgresql.Driver");
             properties.put("spring.jpa.hibernate.ddl-auto", "create");
-            properties.put("spring.jpa.properties.hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect");
+            properties.put("spring.jpa.properties.hibernate.dialect", "org.hibernate.dialect.CockroachDialect");
             properties.put("spring.jpa.show-sql", "true");
             
             appContext.getEnvironment().getPropertySources()
-                .addFirst(new MapPropertySource("testcontainers-postgresql", properties));
+                .addFirst(new MapPropertySource("testcontainers-cockroachdb", properties));
         }
     }
 
@@ -166,11 +164,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         );
         sprintRepository.save(sprint1);
         
-        // Add tickets to sprint - save this until after worklog creation
-        // sprint1.addTicket(ticket1);
-        // sprint1.addTicket(ticket2);
-        // sprintRepository.save(sprint1);
-        
         // Create work log
         System.out.println("Creating worklog with ticket ID: " + ticket1.getId());
         workLog1 = new WorkLog(
@@ -187,11 +180,8 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         sprint1.addTicket(ticket1);
         sprint1.addTicket(ticket2);
         sprintRepository.save(sprint1);
-        
-        // entityManager.flush();
     }
     
-
     //-------------------------------------------------------------------------
     // SECTION 1: FOREIGN KEY CASCADE BEHAVIORS
     //-------------------------------------------------------------------------
@@ -352,27 +342,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         assertThat(updatedTicket.getEstimatedHours()).isEqualTo(5.0);
     }
     
-    // @Test
-    // public void testEstimatedHoursConstraint() {
-    //     // Set negative estimated hours (should fail)
-    //     ticket1.setEstimatedHours(-5.0);
-        
-    //     // With a check constraint, this would throw a DataIntegrityViolationException
-    //     assertThrows(DataIntegrityViolationException.class, () -> {
-    //         ticketRepository.save(ticket1);
-    //         entityManager.flush();
-    //     });
-        
-    //     // Set valid estimated hours (should succeed)
-    //     ticket1.setEstimatedHours(5.0);
-    //     ticketRepository.save(ticket1);
-    //     entityManager.flush();
-        
-    //     // Verify the estimated hours were saved
-    //     Ticket updatedTicket = ticketRepository.findById(ticket1.getId()).orElseThrow();
-    //     assertThat(updatedTicket.getEstimatedHours()).isEqualTo(5.0);
-    // }
-    
     //-------------------------------------------------------------------------
     // SECTION 3: UNIQUE CONSTRAINTS DataIntegrityViolationException
     //-------------------------------------------------------------------------
@@ -386,7 +355,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
             userRepository.save(duplicateUser);
             entityManager.flush();
         });
-    
     }
 
     @Test 
@@ -403,11 +371,10 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         User foundUser = userRepository.findByUsername("newuser").orElseThrow();
         assertThat(foundUser.getEmail()).isEqualTo("new@example.com");
     }
-
     
-    // //-------------------------------------------------------------------------
-    // // SECTION 4: FOREIGN KEY CONSTRAINTS
-    // //-------------------------------------------------------------------------
+    //-------------------------------------------------------------------------
+    // SECTION 4: FOREIGN KEY CONSTRAINTS
+    //-------------------------------------------------------------------------
     
     @Test
     public void testForeignKeyConstraintTicketProject() {
@@ -424,17 +391,14 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         });
     }
     
-    
     //-------------------------------------------------------------------------
     // SECTION 5: ADVANCED FOREIGN KEY BEHAVIORS
     //-------------------------------------------------------------------------
-    
 
     @Test
     public void testCascadeOnUpdate() {
         // Create a project with a manual ID
         entityManager.createNativeQuery(
-            // WORKAROUND - Use unique project name to avoid constraint violation
             "INSERT INTO projects (id, name, description, create_time) VALUES (100, 'Update Cascade Test Project', 'Testing ON UPDATE CASCADE', CURRENT_TIMESTAMP)"
         ).executeUpdate();
         
@@ -470,120 +434,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         assertThat(entityManager.find(Project.class, 100L)).isNull();
     }
 
-    // @Test
-    // public void testCompositePrimaryKey() {
-    //     // Test basic composite key functionality
-    //     UserProjectRole role = new UserProjectRole(user1, project1, "ADMIN");
-    //     userProjectRoleRepository.save(role);
-    //     entityManager.flush();
-        
-    //     // Test retrieval by composite key
-    //     UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(user1.getId(), project1.getId());
-    //     UserProjectRole savedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //     assertThat(savedRole.getRoleName()).isEqualTo("ADMIN");
-        
-    //     // Test update (should overwrite, not create new record)
-    //     role.setRoleName("DEVELOPER");
-    //     userProjectRoleRepository.save(role);
-    //     entityManager.flush();
-        
-    //     assertThat(userProjectRoleRepository.count()).isEqualTo(1L);
-    //     UserProjectRole updatedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //     assertThat(updatedRole.getRoleName()).isEqualTo("DEVELOPER");
-    // }
-
-    // /**
-    //  * Tests composite foreign keys with UserProjectRole entity.
-    //  * This tests that:
-    //  * 1. Composite primary keys work correctly
-    //  * 2. Foreign key constraints on multiple columns work
-    //  * 3. Cascading operations work with composite keys
-    //  */
-    // @Test
-    // public void testCompositeForeignKey() {
-    //     // TOIL - JpaSystem JDBC exception with "current transaction is aborted"
-    //     // WORKAROUND - Use separate transactions for each operation to avoid rollback cascade
-    //     TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
-        
-    //     final Long[] ids = new Long[2]; // userId, projectId
-        
-    //     // Create test data
-    //     txTemplate.execute(status -> {
-    //         ids[0] = user1.getId();
-    //         ids[1] = project1.getId();
-            
-    //         // Create a role assignment
-    //         UserProjectRole role = new UserProjectRole(user1, project1, "ADMIN");
-    //         userProjectRoleRepository.save(role);
-            
-    //         return null;
-    //     });
-        
-    //     // Verify it was saved
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         UserProjectRole savedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //         assertThat(savedRole.getRoleName()).isEqualTo("ADMIN");
-    //         return null;
-    //     });
-        
-    //     // Test composite primary key constraint via update
-    //     txTemplate.execute(status -> {
-    //         User managedUser = userRepository.findById(ids[0]).orElseThrow();
-    //         Project managedProject = projectRepository.findById(ids[1]).orElseThrow();
-            
-    //         UserProjectRole updatedRole = new UserProjectRole(managedUser, managedProject, "DEVELOPER");
-    //         userProjectRoleRepository.save(updatedRole);
-    //         return null;
-    //     });
-        
-    //     // Should still be only one record, but with updated role name
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         UserProjectRole refreshedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //         assertThat(refreshedRole.getRoleName()).isEqualTo("DEVELOPER");
-    //         return null;
-    //     });
-        
-    //     // Test constraint violation when trying to delete referenced user
-    //     try {
-    //         txTemplate.execute(status -> {
-    //             entityManager.createNativeQuery("DELETE FROM users WHERE id = ?")
-    //                 .setParameter(1, ids[0])
-    //                 .executeUpdate();
-    //             return null;
-    //         });
-    //         fail("Expected a constraint violation");
-    //     } catch (Exception e) {
-    //         // Expected - cannot delete user referenced by role
-    //     }
-        
-    //     // Clean up properly - delete role first, then verify we can delete user
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         if (userProjectRoleRepository.existsById(roleId)) {
-    //             UserProjectRole role = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //             userProjectRoleRepository.delete(role);
-    //         }
-    //         return null;
-    //     });
-        
-    //     // Verify role is gone
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         assertThat(userProjectRoleRepository.existsById(roleId)).isFalse();
-    //         return null;
-    //     });
-    // }
-
-    // /**
-    //  * Tests self-referential foreign keys with ticket dependencies.
-    //  * This tests:
-    //  * 1. Self-referential relationships work correctly
-    //  * 2. Multi-level dependency chains can be created and traversed
-    //  * 3. Circular dependencies are prevented
-    //  */
-    
     @Test
     public void testSelfReferentialForeignKey() {
         // Create parent ticket
@@ -630,10 +480,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         ticketRepository.deleteById(parentId);
     }
 
-    /**
-     * Tests ON DELETE SET NULL foreign key action.
-     * When a user is deleted, tickets assigned to them will have their assignee set to NULL.
-     */
     @Test
     public void testSetNullOnDelete() {
         // Step 1: Create and persist entities in clean state
@@ -666,19 +512,4 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         
         System.out.println("SUCCESS: JPA/Hibernate + ON DELETE SET NULL constraint worked!");
     }
-
-    @Test
-    public void testCompositeUniqueConstraint() {
-        // Create first role
-        UserProjectRole role1 = new UserProjectRole(user1, project1, "ADMIN");
-        userProjectRoleRepository.saveAndFlush(role1);
-        
-        // Try to create duplicate user-project combination
-        UserProjectRole duplicateRole = new UserProjectRole(user1, project1, "DEVELOPER");
-        
-        assertThrows(DataIntegrityViolationException.class, () -> {
-            userProjectRoleRepository.saveAndFlush(duplicateRole);
-        });
-    }
-
 }

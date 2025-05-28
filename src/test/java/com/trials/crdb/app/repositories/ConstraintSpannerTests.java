@@ -5,38 +5,46 @@ import static org.junit.Assert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.sql.DataSource;
+
 import org.hibernate.exception.ConstraintViolationException;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
-import org.springframework.context.ApplicationContextInitializer;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.lang.NonNull;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.Rollback;
-import org.springframework.test.context.ContextConfiguration;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.BindMode;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.Network;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 import com.trials.crdb.app.model.*;
 import com.trials.crdb.app.test.TimeBasedTest;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-
-import org.springframework.core.env.MapPropertySource;
 
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -50,31 +58,65 @@ import java.util.function.Supplier;
 @Testcontainers
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@ContextConfiguration(initializers = ConstraintPostgresTests.DataSourceInitializer.class)
-public class ConstraintPostgresTests extends TimeBasedTest {
+public class ConstraintSpannerTests extends TimeBasedTest {
 
-    @Container
-    static final PostgreSQLContainer<?> postgresContainer = 
-        new PostgreSQLContainer<>(DockerImageName.parse("postgres:15-alpine"))
-            .withDatabaseName("test_constraints")
-            .withUsername("testuser")
-            .withPassword("testPass");
+    private static final String PROJECT_ID = "emulator-project";
+    private static final String INSTANCE_ID = "test-instance";
+    private static final String DATABASE_ID = "test-database";
     
-    static class DataSourceInitializer implements ApplicationContextInitializer<ConfigurableApplicationContext> {
-        @Override
-        public void initialize(@NonNull ConfigurableApplicationContext appContext) {
-            Map<String, Object> properties = new HashMap<>();
-            properties.put("spring.datasource.url", postgresContainer.getJdbcUrl());
-            properties.put("spring.datasource.username", postgresContainer.getUsername());
-            properties.put("spring.datasource.password", postgresContainer.getPassword());
-            properties.put("spring.datasource.driver-class-name", "org.postgresql.Driver");
-            properties.put("spring.jpa.hibernate.ddl-auto", "create");
-            properties.put("spring.jpa.properties.hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect");
-            properties.put("spring.jpa.show-sql", "true");
-            
-            appContext.getEnvironment().getPropertySources()
-                .addFirst(new MapPropertySource("testcontainers-postgresql", properties));
-        }
+    // Create empty credentials file for test
+    @BeforeAll
+    public static void setupCredentials() throws IOException {
+        Files.writeString(Path.of("/tmp/empty-credentials.json"), "{}");
+    }
+    
+    // Create a shared network for containers
+    private static final Network NETWORK = Network.newNetwork();
+
+    // Spanner emulator container
+    @Container
+    static final GenericContainer<?> spannerEmulator = 
+        new GenericContainer<>("gcr.io/cloud-spanner-emulator/emulator")
+            .withNetwork(NETWORK)
+            .withNetworkAliases("spanner-emulator")
+            .withExposedPorts(9010, 9020)
+            .withStartupTimeout(Duration.ofMinutes(2));
+    
+    // PGAdapter container with matched configuration
+    @Container
+    static final GenericContainer<?> pgAdapter = 
+        new GenericContainer<>("gcr.io/cloud-spanner-pg-adapter/pgadapter")
+            .withNetwork(NETWORK)
+            .dependsOn(spannerEmulator)
+            .withExposedPorts(5432)
+            .withFileSystemBind("/tmp/empty-credentials.json", "/credentials.json", BindMode.READ_ONLY)
+            .withCommand(
+                "-p", PROJECT_ID,
+                "-i", INSTANCE_ID,
+                "-d", DATABASE_ID,
+                "-e", "spanner-emulator:9010",
+                "-c", "/credentials.json",
+                "-r", "autoConfigEmulator=true",
+                "-x"
+            )
+            .withStartupTimeout(Duration.ofMinutes(2));
+
+    @DynamicPropertySource
+    static void registerProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.datasource.url", () -> {
+            String pgHost = pgAdapter.getHost();
+            int pgPort = pgAdapter.getMappedPort(5432);
+            return String.format("jdbc:postgresql://%s:%d/%s", pgHost, pgPort, DATABASE_ID);
+        });
+        registry.add("spring.datasource.username", () -> "postgres");
+        registry.add("spring.datasource.password", () -> "");
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
+        registry.add("spring.datasource.hikari.connection-init-sql", 
+            () -> "SET spanner.support_drop_cascade=true");
+        registry.add("spring.jpa.properties.hibernate.dialect", 
+            () -> "org.hibernate.dialect.PostgreSQLDialect");
+        registry.add("spring.jpa.show-sql", () -> "true");
     }
 
     @PersistenceContext
@@ -99,6 +141,9 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     private ProjectRepository projectRepository;
 
     @Autowired
+    private DataSource dataSource;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     @Autowired
@@ -110,10 +155,123 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     private Ticket ticket1, ticket2;
     private Sprint sprint1;
     private WorkLog workLog1;
-    
+
     @BeforeEach
-    void setUp() {
+    void setupSchema() throws SQLException {
         super.setupTime(); // Set up fixed time from TimeBasedTest
+        
+        // Create schema manually for Spanner
+        try (Connection conn = dataSource.getConnection()) {
+            try (Statement stmt = conn.createStatement()) {
+                // Enable Spanner settings
+                stmt.execute("SET spanner.support_drop_cascade=true");
+                
+                // Drop tables if they exist
+                stmt.execute("DROP TABLE IF EXISTS work_logs");
+                stmt.execute("DROP TABLE IF EXISTS sprint_tickets");
+                stmt.execute("DROP TABLE IF EXISTS user_project_roles");
+                stmt.execute("DROP TABLE IF EXISTS tickets");
+                stmt.execute("DROP TABLE IF EXISTS sprints");
+                stmt.execute("DROP TABLE IF EXISTS user_projects");
+                stmt.execute("DROP TABLE IF EXISTS users");
+                stmt.execute("DROP TABLE IF EXISTS projects");
+                
+                // Create projects table
+                stmt.execute("CREATE TABLE projects (" +
+                    "id BIGINT GENERATED BY DEFAULT AS IDENTITY (BIT_REVERSED_POSITIVE)," +
+                    "create_time TIMESTAMPTZ NOT NULL," +
+                    "description TEXT," +
+                    "name VARCHAR(255) NOT NULL," +
+                    "PRIMARY KEY (id)" +
+                    ")");
+                
+                // Create users table
+                stmt.execute("CREATE TABLE users (" +
+                    "id BIGINT GENERATED BY DEFAULT AS IDENTITY (BIT_REVERSED_POSITIVE)," +
+                    "create_time TIMESTAMPTZ NOT NULL," +
+                    "username VARCHAR(255) NOT NULL," +
+                    "email VARCHAR(255) NOT NULL," +
+                    "full_name VARCHAR(255)," +
+                    "PRIMARY KEY (id)" +
+                    ")");
+                
+                // Create unique indexes
+                stmt.execute("CREATE UNIQUE INDEX uk_users_username ON users (username)");
+                stmt.execute("CREATE UNIQUE INDEX uk_projects_name ON projects (name)");
+                
+                // Create join table
+                stmt.execute("CREATE TABLE user_projects (" +
+                    "user_id BIGINT NOT NULL," +
+                    "project_id BIGINT NOT NULL," +
+                    "PRIMARY KEY (user_id, project_id)" +
+                    ")");
+                
+                // Create sprints table
+                stmt.execute("CREATE TABLE sprints (" +
+                    "id BIGINT GENERATED BY DEFAULT AS IDENTITY (BIT_REVERSED_POSITIVE)," +
+                    "name VARCHAR(255) NOT NULL," +
+                    "description TEXT," +
+                    "start_date TIMESTAMPTZ NOT NULL," +
+                    "end_date TIMESTAMPTZ NOT NULL," +
+                    "project_id BIGINT NOT NULL," +
+                    "create_time TIMESTAMPTZ NOT NULL," +
+                    "update_time TIMESTAMPTZ," +
+                    "PRIMARY KEY (id)" +
+                    ")");
+                
+                // Create tickets table with all fields
+                stmt.execute("CREATE TABLE tickets (" +
+                    "id BIGINT GENERATED BY DEFAULT AS IDENTITY (BIT_REVERSED_POSITIVE)," +
+                    "title VARCHAR(255) NOT NULL," +
+                    "description TEXT," +
+                    "status VARCHAR(20) NOT NULL," +
+                    "priority VARCHAR(20) NOT NULL," +
+                    "metadata JSONB," +
+                    "assignee_id BIGINT," +
+                    "reporter_id BIGINT NOT NULL," +
+                    "project_id BIGINT NOT NULL," +
+                    "create_time TIMESTAMPTZ NOT NULL," +
+                    "update_time TIMESTAMPTZ," +
+                    "due_date TIMESTAMPTZ," +
+                    "resolved_date TIMESTAMPTZ," +
+                    "estimated_hours FLOAT," +
+                    "dependent_on_id BIGINT," +
+                    "tags TEXT[]," +
+                    "version BIGINT NOT NULL DEFAULT 0," +
+                    "PRIMARY KEY (id)" +
+                    ")");
+                
+                // Create work_logs table
+                stmt.execute("CREATE TABLE work_logs (" +
+                    "id BIGINT GENERATED BY DEFAULT AS IDENTITY (BIT_REVERSED_POSITIVE)," +
+                    "ticket_id BIGINT NOT NULL," +
+                    "user_id BIGINT NOT NULL," +
+                    "start_time TIMESTAMPTZ NOT NULL," +
+                    "end_time TIMESTAMPTZ NOT NULL," +
+                    "description TEXT NOT NULL," +
+                    "hours_spent FLOAT NOT NULL," +
+                    "create_time TIMESTAMPTZ NOT NULL," +
+                    "update_time TIMESTAMPTZ," +
+                    "PRIMARY KEY (id)" +
+                    ")");
+                
+                // Create sprint_tickets table
+                stmt.execute("CREATE TABLE sprint_tickets (" +
+                    "sprint_id BIGINT NOT NULL," +
+                    "ticket_id BIGINT NOT NULL," +
+                    "PRIMARY KEY (sprint_id, ticket_id)" +
+                    ")");
+                
+                // Create user_project_roles table
+                stmt.execute("CREATE TABLE user_project_roles (" +
+                    "id BIGINT GENERATED BY DEFAULT AS IDENTITY (BIT_REVERSED_POSITIVE)," +
+                    "user_id BIGINT NOT NULL," +
+                    "project_id BIGINT NOT NULL," +
+                    "role_name VARCHAR(255) NOT NULL," +
+                    "PRIMARY KEY (id)" +
+                    ")");
+            }
+        }
         
         TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
         txTemplate.execute(status -> {
@@ -123,13 +281,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     }
     
     private void createTestData() {
-        // Clean up existing data
-        workLogRepository.deleteAll();
-        ticketRepository.deleteAll();
-        sprintRepository.deleteAll();
-        userRepository.deleteAll();
-        projectRepository.deleteAll();
-        
         // Create users
         user1 = new User("john", "john@example.com", "John Smith");
         user2 = new User("jane", "jane@example.com", "Jane Doe");
@@ -166,11 +317,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         );
         sprintRepository.save(sprint1);
         
-        // Add tickets to sprint - save this until after worklog creation
-        // sprint1.addTicket(ticket1);
-        // sprint1.addTicket(ticket2);
-        // sprintRepository.save(sprint1);
-        
         // Create work log
         System.out.println("Creating worklog with ticket ID: " + ticket1.getId());
         workLog1 = new WorkLog(
@@ -187,11 +333,8 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         sprint1.addTicket(ticket1);
         sprint1.addTicket(ticket2);
         sprintRepository.save(sprint1);
-        
-        // entityManager.flush();
     }
     
-
     //-------------------------------------------------------------------------
     // SECTION 1: FOREIGN KEY CASCADE BEHAVIORS
     //-------------------------------------------------------------------------
@@ -352,27 +495,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         assertThat(updatedTicket.getEstimatedHours()).isEqualTo(5.0);
     }
     
-    // @Test
-    // public void testEstimatedHoursConstraint() {
-    //     // Set negative estimated hours (should fail)
-    //     ticket1.setEstimatedHours(-5.0);
-        
-    //     // With a check constraint, this would throw a DataIntegrityViolationException
-    //     assertThrows(DataIntegrityViolationException.class, () -> {
-    //         ticketRepository.save(ticket1);
-    //         entityManager.flush();
-    //     });
-        
-    //     // Set valid estimated hours (should succeed)
-    //     ticket1.setEstimatedHours(5.0);
-    //     ticketRepository.save(ticket1);
-    //     entityManager.flush();
-        
-    //     // Verify the estimated hours were saved
-    //     Ticket updatedTicket = ticketRepository.findById(ticket1.getId()).orElseThrow();
-    //     assertThat(updatedTicket.getEstimatedHours()).isEqualTo(5.0);
-    // }
-    
     //-------------------------------------------------------------------------
     // SECTION 3: UNIQUE CONSTRAINTS DataIntegrityViolationException
     //-------------------------------------------------------------------------
@@ -386,7 +508,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
             userRepository.save(duplicateUser);
             entityManager.flush();
         });
-    
     }
 
     @Test 
@@ -403,11 +524,10 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         User foundUser = userRepository.findByUsername("newuser").orElseThrow();
         assertThat(foundUser.getEmail()).isEqualTo("new@example.com");
     }
-
     
-    // //-------------------------------------------------------------------------
-    // // SECTION 4: FOREIGN KEY CONSTRAINTS
-    // //-------------------------------------------------------------------------
+    //-------------------------------------------------------------------------
+    // SECTION 4: FOREIGN KEY CONSTRAINTS
+    //-------------------------------------------------------------------------
     
     @Test
     public void testForeignKeyConstraintTicketProject() {
@@ -424,17 +544,14 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         });
     }
     
-    
     //-------------------------------------------------------------------------
     // SECTION 5: ADVANCED FOREIGN KEY BEHAVIORS
     //-------------------------------------------------------------------------
-    
 
     @Test
     public void testCascadeOnUpdate() {
         // Create a project with a manual ID
         entityManager.createNativeQuery(
-            // WORKAROUND - Use unique project name to avoid constraint violation
             "INSERT INTO projects (id, name, description, create_time) VALUES (100, 'Update Cascade Test Project', 'Testing ON UPDATE CASCADE', CURRENT_TIMESTAMP)"
         ).executeUpdate();
         
@@ -470,120 +587,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         assertThat(entityManager.find(Project.class, 100L)).isNull();
     }
 
-    // @Test
-    // public void testCompositePrimaryKey() {
-    //     // Test basic composite key functionality
-    //     UserProjectRole role = new UserProjectRole(user1, project1, "ADMIN");
-    //     userProjectRoleRepository.save(role);
-    //     entityManager.flush();
-        
-    //     // Test retrieval by composite key
-    //     UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(user1.getId(), project1.getId());
-    //     UserProjectRole savedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //     assertThat(savedRole.getRoleName()).isEqualTo("ADMIN");
-        
-    //     // Test update (should overwrite, not create new record)
-    //     role.setRoleName("DEVELOPER");
-    //     userProjectRoleRepository.save(role);
-    //     entityManager.flush();
-        
-    //     assertThat(userProjectRoleRepository.count()).isEqualTo(1L);
-    //     UserProjectRole updatedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //     assertThat(updatedRole.getRoleName()).isEqualTo("DEVELOPER");
-    // }
-
-    // /**
-    //  * Tests composite foreign keys with UserProjectRole entity.
-    //  * This tests that:
-    //  * 1. Composite primary keys work correctly
-    //  * 2. Foreign key constraints on multiple columns work
-    //  * 3. Cascading operations work with composite keys
-    //  */
-    // @Test
-    // public void testCompositeForeignKey() {
-    //     // TOIL - JpaSystem JDBC exception with "current transaction is aborted"
-    //     // WORKAROUND - Use separate transactions for each operation to avoid rollback cascade
-    //     TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
-        
-    //     final Long[] ids = new Long[2]; // userId, projectId
-        
-    //     // Create test data
-    //     txTemplate.execute(status -> {
-    //         ids[0] = user1.getId();
-    //         ids[1] = project1.getId();
-            
-    //         // Create a role assignment
-    //         UserProjectRole role = new UserProjectRole(user1, project1, "ADMIN");
-    //         userProjectRoleRepository.save(role);
-            
-    //         return null;
-    //     });
-        
-    //     // Verify it was saved
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         UserProjectRole savedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //         assertThat(savedRole.getRoleName()).isEqualTo("ADMIN");
-    //         return null;
-    //     });
-        
-    //     // Test composite primary key constraint via update
-    //     txTemplate.execute(status -> {
-    //         User managedUser = userRepository.findById(ids[0]).orElseThrow();
-    //         Project managedProject = projectRepository.findById(ids[1]).orElseThrow();
-            
-    //         UserProjectRole updatedRole = new UserProjectRole(managedUser, managedProject, "DEVELOPER");
-    //         userProjectRoleRepository.save(updatedRole);
-    //         return null;
-    //     });
-        
-    //     // Should still be only one record, but with updated role name
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         UserProjectRole refreshedRole = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //         assertThat(refreshedRole.getRoleName()).isEqualTo("DEVELOPER");
-    //         return null;
-    //     });
-        
-    //     // Test constraint violation when trying to delete referenced user
-    //     try {
-    //         txTemplate.execute(status -> {
-    //             entityManager.createNativeQuery("DELETE FROM users WHERE id = ?")
-    //                 .setParameter(1, ids[0])
-    //                 .executeUpdate();
-    //             return null;
-    //         });
-    //         fail("Expected a constraint violation");
-    //     } catch (Exception e) {
-    //         // Expected - cannot delete user referenced by role
-    //     }
-        
-    //     // Clean up properly - delete role first, then verify we can delete user
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         if (userProjectRoleRepository.existsById(roleId)) {
-    //             UserProjectRole role = userProjectRoleRepository.findById(roleId).orElseThrow();
-    //             userProjectRoleRepository.delete(role);
-    //         }
-    //         return null;
-    //     });
-        
-    //     // Verify role is gone
-    //     txTemplate.execute(status -> {
-    //         UserProjectRole.UserProjectRoleId roleId = new UserProjectRoleId(ids[0], ids[1]);
-    //         assertThat(userProjectRoleRepository.existsById(roleId)).isFalse();
-    //         return null;
-    //     });
-    // }
-
-    // /**
-    //  * Tests self-referential foreign keys with ticket dependencies.
-    //  * This tests:
-    //  * 1. Self-referential relationships work correctly
-    //  * 2. Multi-level dependency chains can be created and traversed
-    //  * 3. Circular dependencies are prevented
-    //  */
-    
     @Test
     public void testSelfReferentialForeignKey() {
         // Create parent ticket
@@ -630,10 +633,6 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         ticketRepository.deleteById(parentId);
     }
 
-    /**
-     * Tests ON DELETE SET NULL foreign key action.
-     * When a user is deleted, tickets assigned to them will have their assignee set to NULL.
-     */
     @Test
     public void testSetNullOnDelete() {
         // Step 1: Create and persist entities in clean state
@@ -666,19 +665,4 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         
         System.out.println("SUCCESS: JPA/Hibernate + ON DELETE SET NULL constraint worked!");
     }
-
-    @Test
-    public void testCompositeUniqueConstraint() {
-        // Create first role
-        UserProjectRole role1 = new UserProjectRole(user1, project1, "ADMIN");
-        userProjectRoleRepository.saveAndFlush(role1);
-        
-        // Try to create duplicate user-project combination
-        UserProjectRole duplicateRole = new UserProjectRole(user1, project1, "DEVELOPER");
-        
-        assertThrows(DataIntegrityViolationException.class, () -> {
-            userProjectRoleRepository.saveAndFlush(duplicateRole);
-        });
-    }
-
 }
