@@ -16,8 +16,7 @@ public abstract class TimeBasedTest {
     @BeforeEach
     public void setupTime() {
         // Set up a fixed date time for testing
-        baseTime = ZonedDateTime.of(
-            2023, 1, 1, 12, 0, 0, 0, ZoneId.systemDefault()
+        baseTime = ZonedDateTime.of(2026, 6, 15, 12, 0, 0, 0, ZoneId.systemDefault()
         ).truncatedTo(ChronoUnit.SECONDS);
         
         DateTimeProvider.useFixedClockAt(baseTime);

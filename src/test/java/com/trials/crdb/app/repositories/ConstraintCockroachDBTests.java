@@ -257,6 +257,7 @@ public class ConstraintCockroachDBTests extends TimeBasedTest {
     
     @Test
     public void testInvalidDueDateShouldFailConstraint() {
+        
         // Create a valid ticket
         User testUser = userRepository.findById(user1.getId()).orElseThrow();
         Project testProject = projectRepository.findById(project1.getId()).orElseThrow();
@@ -264,15 +265,47 @@ public class ConstraintCockroachDBTests extends TimeBasedTest {
         Ticket testTicket = new Ticket("Invalid Due Date Test", "Testing due date constraint", testUser, testProject);
         testTicket.setStatus(Ticket.TicketStatus.OPEN);
         testTicket.setPriority(Ticket.TicketPriority.MEDIUM);
-        ticketRepository.saveAndFlush(testTicket);
         
-        // Set invalid due date
-        testTicket.setDueDate(baseTime.minusDays(1)); // Before create time
+        // Save first to get the actual create_time
+        testTicket = ticketRepository.saveAndFlush(testTicket);
+        Long ticketId = testTicket.getId();
         
-        // This should fail due to check constraint
-        assertThrows(Exception.class, () -> {
-            ticketRepository.saveAndFlush(testTicket);
-        });
+        System.out.println("Saved ticket ID: " + ticketId);
+        System.out.println("Entity create_time: " + testTicket.getCreateTime());
+        
+        // Clear and reload to ensure we get fresh data
+        entityManager.clear();
+        
+        // Method 1: Try reloading the entity
+        Ticket reloadedTicket = ticketRepository.findById(ticketId).orElseThrow();
+        ZonedDateTime actualCreateTime = reloadedTicket.getCreateTime();
+        
+        System.out.println("Reloaded entity create_time: " + actualCreateTime);
+        
+        // Now test the constraint
+        ZonedDateTime invalidDueDate = actualCreateTime.minusHours(1);
+        System.out.println("Testing constraint with:");
+        System.out.println("  create_time: " + actualCreateTime);
+        System.out.println("  due_date: " + invalidDueDate);
+        
+        // Set invalid due date using direct SQL to ensure constraint is triggered
+        try {
+            int rows = entityManager.createNativeQuery(
+                "UPDATE tickets SET due_date = ? WHERE id = ?"
+            ).setParameter(1, java.sql.Timestamp.from(invalidDueDate.toInstant()))
+            .setParameter(2, ticketId)
+            .executeUpdate();
+            
+            entityManager.flush();
+            System.out.println("ERROR: Constraint was not triggered! Updated " + rows + " rows");
+            fail("Expected constraint violation but update succeeded");
+        } catch (Exception e) {
+            System.out.println("SUCCESS: Constraint violation caught - " + e.getClass().getSimpleName());
+            assertThat(e).isInstanceOf(Exception.class); // Verify an exception was thrown
+        }
+        
+        // Clean up
+        // ticketRepository.deleteById(ticketId);
     }
 
     @Test

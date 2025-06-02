@@ -119,7 +119,7 @@ public class CommentFeaturesPostgresTests extends TimeBasedTest {
         entityManager.persist(project1);
         
         // Create tickets
-        ticket1 = new Ticket("Bug Fix", "Fix critical bug in payment system", user1, project1);
+        ticket1 = new Ticket("Bug Fix", "Fix critical bug in some system", user1, project1);
         ticket2 = new Ticket("Feature Request", "Add user profile management", user2, project1);
         entityManager.persist(ticket1);
         entityManager.persist(ticket2);

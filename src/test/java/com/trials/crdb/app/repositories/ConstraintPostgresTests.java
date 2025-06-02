@@ -267,6 +267,7 @@ public class ConstraintPostgresTests extends TimeBasedTest {
     
     @Test
     public void testInvalidDueDateShouldFailConstraint() {
+        
         // Create a valid ticket
         User testUser = userRepository.findById(user1.getId()).orElseThrow();
         Project testProject = projectRepository.findById(project1.getId()).orElseThrow();
@@ -274,15 +275,47 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         Ticket testTicket = new Ticket("Invalid Due Date Test", "Testing due date constraint", testUser, testProject);
         testTicket.setStatus(Ticket.TicketStatus.OPEN);
         testTicket.setPriority(Ticket.TicketPriority.MEDIUM);
-        ticketRepository.saveAndFlush(testTicket);
         
-        // Set invalid due date
-        testTicket.setDueDate(baseTime.minusDays(1)); // Before create time
+        // Save first to get the actual create_time
+        testTicket = ticketRepository.saveAndFlush(testTicket);
+        Long ticketId = testTicket.getId();
         
-        // This should fail due to check constraint
-        assertThrows(Exception.class, () -> {
-            ticketRepository.saveAndFlush(testTicket);
-        });
+        System.out.println("Saved ticket ID: " + ticketId);
+        System.out.println("Entity create_time: " + testTicket.getCreateTime());
+        
+        // Clear and reload to ensure we get fresh data
+        entityManager.clear();
+        
+        // Method 1: Try reloading the entity
+        Ticket reloadedTicket = ticketRepository.findById(ticketId).orElseThrow();
+        ZonedDateTime actualCreateTime = reloadedTicket.getCreateTime();
+        
+        System.out.println("Reloaded entity create_time: " + actualCreateTime);
+        
+        // Now test the constraint
+        ZonedDateTime invalidDueDate = actualCreateTime.minusHours(1);
+        System.out.println("Testing constraint with:");
+        System.out.println("  create_time: " + actualCreateTime);
+        System.out.println("  due_date: " + invalidDueDate);
+        
+        // Set invalid due date using direct SQL to ensure constraint is triggered
+        try {
+            int rows = entityManager.createNativeQuery(
+                "UPDATE tickets SET due_date = ? WHERE id = ?"
+            ).setParameter(1, java.sql.Timestamp.from(invalidDueDate.toInstant()))
+            .setParameter(2, ticketId)
+            .executeUpdate();
+            
+            entityManager.flush();
+            System.out.println("ERROR: Constraint was not triggered! Updated " + rows + " rows");
+            fail("Expected constraint violation but update succeeded");
+        } catch (Exception e) {
+            System.out.println("SUCCESS: Constraint violation caught - " + e.getClass().getSimpleName());
+            assertThat(e).isInstanceOf(Exception.class); // Verify an exception was thrown
+        }
+        
+        // Clean up
+        // ticketRepository.deleteById(ticketId);
     }
 
     @Test
@@ -679,6 +712,84 @@ public class ConstraintPostgresTests extends TimeBasedTest {
         assertThrows(DataIntegrityViolationException.class, () -> {
             userProjectRoleRepository.saveAndFlush(duplicateRole);
         });
+    }
+
+    @Test
+    public void debugConstraintTest() {
+        System.out.println("=== DEBUGGING CONSTRAINT TEST ===");
+        
+        // Check what baseTime is set to
+        System.out.println("baseTime from TimeBasedTest: " + baseTime);
+        System.out.println("System time (what @CreationTimestamp uses): " + ZonedDateTime.now());
+        System.out.println("DateTimeProvider.now(): " + com.trials.crdb.app.utils.DateTimeProvider.now());
+        
+        // Check if CHECK constraints actually exist in the database
+        List<Object[]> checkConstraints = entityManager.createNativeQuery(
+            "SELECT constraint_name, check_clause FROM information_schema.check_constraints " +
+            "WHERE constraint_schema = CURRENT_SCHEMA() AND constraint_name LIKE '%ticket%'"
+        ).getResultList();
+        
+        System.out.println("\nCHECK constraints found in database:");
+        if (checkConstraints.isEmpty()) {
+            System.out.println("❌ NO CHECK constraints found! @Check annotations not working.");
+        } else {
+            for (Object[] row : checkConstraints) {
+                System.out.println("✅ " + row[0] + ": " + row[1]);
+            }
+        }
+        
+        // Create a test ticket to see actual timing
+        User testUser = userRepository.findById(user1.getId()).orElseThrow();
+        Project testProject = projectRepository.findById(project1.getId()).orElseThrow();
+        
+        Ticket testTicket = new Ticket("Debug Test", "Testing timing", testUser, testProject);
+        testTicket.setStatus(Ticket.TicketStatus.OPEN);
+        testTicket.setPriority(Ticket.TicketPriority.MEDIUM);
+        
+        // First save without due_date
+        testTicket = ticketRepository.saveAndFlush(testTicket);
+        
+        System.out.println("\n=== TICKET TIMING ANALYSIS ===");
+        System.out.println("Ticket create_time (from @CreationTimestamp): " + testTicket.getCreateTime());
+        System.out.println("baseTime: " + baseTime);
+        System.out.println("baseTime.minusDays(1): " + baseTime.minusDays(1));
+        
+        // Check if due_date would violate constraint
+        ZonedDateTime proposedDueDate = baseTime.minusDays(1);
+        ZonedDateTime actualCreateTime = testTicket.getCreateTime();
+        
+        boolean wouldViolateConstraint = proposedDueDate.isBefore(actualCreateTime) || proposedDueDate.isEqual(actualCreateTime);
+        System.out.println("\nCONSTRAINT ANALYSIS:");
+        System.out.println("Proposed due_date: " + proposedDueDate);
+        System.out.println("Actual create_time: " + actualCreateTime);
+        System.out.println("due_date < create_time? " + proposedDueDate.isBefore(actualCreateTime));
+        System.out.println("due_date = create_time? " + proposedDueDate.isEqual(actualCreateTime));
+        System.out.println("Would violate constraint? " + wouldViolateConstraint);
+        
+        if (!wouldViolateConstraint) {
+            System.out.println("🔍 FOUND THE ISSUE: due_date > create_time, so NO constraint violation!");
+            System.out.println("   This explains why no exception is thrown.");
+        }
+        
+        // Now test what WOULD violate the constraint
+        System.out.println("\n=== TESTING ACTUAL CONSTRAINT VIOLATION ===");
+        ZonedDateTime invalidDueDate = actualCreateTime.minusHours(1);
+        System.out.println("Setting due_date to: " + invalidDueDate + " (1 hour before create_time)");
+        
+        testTicket.setDueDate(invalidDueDate);
+        
+        try {
+            ticketRepository.saveAndFlush(testTicket);
+            System.out.println("❌ NO EXCEPTION thrown - constraint either doesn't exist or isn't working");
+        } catch (Exception e) {
+            System.out.println("✅ EXCEPTION thrown as expected: " + e.getClass().getSimpleName());
+            System.out.println("   Message: " + e.getMessage());
+        }
+        
+        // Clean up
+        ticketRepository.deleteById(testTicket.getId());
+        
+        System.out.println("=== END DEBUG ===");
     }
 
 }

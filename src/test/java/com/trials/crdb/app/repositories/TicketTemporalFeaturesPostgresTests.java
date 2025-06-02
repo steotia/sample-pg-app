@@ -120,19 +120,20 @@ public class TicketTemporalFeaturesPostgresTests extends TimeBasedTest {
         
         entityManager.flush();
     }
-
-    @Test
-    public void inspectTemporalSchema() {
-        // Inspect the schema to verify temporal column types
-        schemaInspector.inspectTableSchema("tickets");
-    }
-
     @Test
     public void testOverdueTickets() {
-        // Create a ticket due yesterday (overdue)
+        // Create a ticket that will become overdue
         Ticket overdueTicket = new Ticket("Overdue Ticket", "Past due date", user1, project1);
-        overdueTicket.setDueDate(baseTime.minusDays(1));
+        overdueTicket.setDueDate(baseTime.plusDays(1)); // Set future date initially to satisfy constraint
         entityManager.persist(overdueTicket);
+        entityManager.flush();
+        
+        // Update due_date via JDBC to make ticket overdue (due_date < current time)
+        jdbcTemplate.update(
+            "UPDATE tickets SET due_date = ? WHERE id = ?",
+            java.sql.Timestamp.from(baseTime.minusDays(1).toInstant()), // Due date in the past
+            overdueTicket.getId()
+        );
         
         // Create a ticket due tomorrow (not overdue)
         Ticket upcomingTicket = new Ticket("Future Ticket", "Not yet due", user2, project2);
@@ -141,11 +142,20 @@ public class TicketTemporalFeaturesPostgresTests extends TimeBasedTest {
         
         // Create a resolved ticket that was due yesterday (not overdue because resolved)
         Ticket resolvedTicket = new Ticket("Resolved Ticket", "Resolved but was overdue", user2, project1);
-        resolvedTicket.setDueDate(baseTime.minusDays(1));
+        resolvedTicket.setDueDate(baseTime.plusDays(1)); // Set future initially
         resolvedTicket.setStatus(Ticket.TicketStatus.RESOLVED);
         entityManager.persist(resolvedTicket);
-        
         entityManager.flush();
+        
+        // Update due_date for resolved ticket to past as well
+        jdbcTemplate.update(
+            "UPDATE tickets SET due_date = ? WHERE id = ?",
+            java.sql.Timestamp.from(baseTime.minusDays(1).toInstant()),
+            resolvedTicket.getId()
+        );
+        
+        // Clear entity manager to ensure fresh data from database
+        entityManager.clear();
         
         // Test the repository method with our baseTime
         List<Ticket> overdueTickets = ticketRepository.findOverdueTickets(baseTime);
@@ -153,15 +163,19 @@ public class TicketTemporalFeaturesPostgresTests extends TimeBasedTest {
         assertThat(overdueTickets).hasSize(1);
         assertThat(overdueTickets.get(0).getTitle()).isEqualTo("Overdue Ticket");
         
-        // Test the isOverdue helper method
-        assertThat(overdueTicket.isOverdue()).isTrue();
-        assertThat(upcomingTicket.isOverdue()).isFalse();
-        assertThat(resolvedTicket.isOverdue()).isFalse();
+        // Test the isOverdue helper method - reload entities first
+        Ticket reloadedOverdue = ticketRepository.findById(overdueTicket.getId()).orElseThrow();
+        Ticket reloadedUpcoming = ticketRepository.findById(upcomingTicket.getId()).orElseThrow();
+        Ticket reloadedResolved = ticketRepository.findById(resolvedTicket.getId()).orElseThrow();
+        
+        assertThat(reloadedOverdue.isOverdue()).isTrue();
+        assertThat(reloadedUpcoming.isOverdue()).isFalse();
+        assertThat(reloadedResolved.isOverdue()).isFalse();
     }
 
     @Test
     public void testTicketsDueInRange() {
-        // Create tickets with different due dates
+        // Create tickets with different due dates - all must be > baseTime
         Ticket dueTomorrow = new Ticket("Due Tomorrow", "Due soon", user1, project1);
         dueTomorrow.setDueDate(baseTime.plusDays(1));
         entityManager.persist(dueTomorrow);
@@ -182,11 +196,15 @@ public class TicketTemporalFeaturesPostgresTests extends TimeBasedTest {
             
         assertThat(ticketsDueSoon).hasSize(1);
         assertThat(ticketsDueSoon.get(0).getTitle()).isEqualTo("Due Tomorrow");
+        
+        // Test finding tickets due in the next 10 days
+        List<Ticket> ticketsDueThisWeek = ticketRepository.findTicketsDueInRange(
+            baseTime, baseTime.plusDays(10));
+        assertThat(ticketsDueThisWeek).hasSize(2);
+        assertThat(ticketsDueThisWeek).extracting("title")
+            .containsExactlyInAnyOrder("Due Tomorrow", "Due Next Week");
     }
 
-    /**
-     * Test the resolution process and updating the resolved date
-     */
     @Test
     public void testResolveTicket() {
         // Create a ticket
@@ -211,14 +229,121 @@ public class TicketTemporalFeaturesPostgresTests extends TimeBasedTest {
         assertThat(ticket.getResolvedDate()).isEqualTo(baseTime);
     }
 
-    /**
-     * Test timezone handling with due dates
-     */
+    @Test
+    public void testResolutionTimeCalculation() {
+        // Create tickets with known resolution times using JDBC for precise control
+        jdbcTemplate.execute("DELETE FROM tickets");
+        
+        // Insert a ticket that was created 5 days ago and resolved today
+        ZonedDateTime createTime = baseTime.minusDays(5);
+        ZonedDateTime resolveTime = baseTime;
+        
+        jdbcTemplate.update(
+            "INSERT INTO tickets (title, description, status, priority, reporter_id, project_id, create_time, resolved_date, version) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "Resolution Test", "Testing resolution time", "RESOLVED", "MEDIUM", user1.getId(), project1.getId(),
+            java.sql.Timestamp.from(createTime.toInstant()),
+            java.sql.Timestamp.from(resolveTime.toInstant()),
+            0L // WORKAROUND - Explicitly set version to avoid NULL constraint violation
+        );
+        
+        // Insert another ticket resolved after 1 day
+        ZonedDateTime quickCreateTime = baseTime.minusDays(1);
+        jdbcTemplate.update(
+            "INSERT INTO tickets (title, description, status, priority, reporter_id, project_id, create_time, resolved_date, version) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "Quick Fix", "Resolved quickly", "RESOLVED", "MEDIUM", user2.getId(), project2.getId(),
+            java.sql.Timestamp.from(quickCreateTime.toInstant()),
+            java.sql.Timestamp.from(resolveTime.toInstant()),
+            0L // WORKAROUND - Explicitly set version
+        );
+        
+        // Get the entities from the database
+        Ticket ticket = ticketRepository.findAll().stream()
+            .filter(t -> "Resolution Test".equals(t.getTitle()))
+            .findFirst().orElseThrow();
+            
+        Ticket quickTicket = ticketRepository.findAll().stream()
+            .filter(t -> "Quick Fix".equals(t.getTitle()))
+            .findFirst().orElseThrow();
+        
+        // Test resolution times
+        Duration resolution = ticket.getResolutionTime();
+        assertThat(resolution).isNotNull();
+        assertThat(resolution.toDays()).isEqualTo(5);
+        
+        Duration quickResolution = quickTicket.getResolutionTime();
+        assertThat(quickResolution).isNotNull();
+        assertThat(quickResolution.toDays()).isEqualTo(1);
+        
+        // Test average resolution time calculation
+        Double avgTimeSeconds = ticketRepository.calculateAverageResolutionTimeInSeconds();
+        assertThat(avgTimeSeconds).isNotNull();
+        
+        // Convert to days for easier comparison
+        Double avgTimeDays = avgTimeSeconds / (60 * 60 * 24);
+        
+        // Average of 5 days and 1 day should be 3 days
+        assertThat(avgTimeDays).isCloseTo(3.0, org.assertj.core.data.Offset.offset(0.2));
+        
+        // Test the native PostgreSQL interval approach (CockroachDB should support this too)
+        String intervalResult = ticketRepository.calculateAverageResolutionTimeInterval();
+        assertThat(intervalResult).isNotNull();
+        System.out.println("Average resolution time (interval): " + intervalResult);
+    }
+
+    @Test
+    public void testFilterByDateRange() {
+        // Clean the tickets table
+        jdbcTemplate.execute("DELETE FROM tickets");
+        
+        // Create time references
+        ZonedDateTime now = baseTime;
+        ZonedDateTime fiveDaysAgo = now.minusDays(5);
+        ZonedDateTime tenDaysAgo = now.minusDays(10);
+        
+        // Insert test data with specific timestamps using JDBC
+        jdbcTemplate.update(
+            "INSERT INTO tickets (title, description, status, priority, reporter_id, project_id, create_time, version) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "Old Ticket", 
+            "Created 10 days ago", 
+            "OPEN", 
+            "MEDIUM", 
+            user1.getId(),
+            project1.getId(),
+            java.sql.Timestamp.from(tenDaysAgo.toInstant()),
+            0L // WORKAROUND - Explicitly set version
+        );
+        
+        jdbcTemplate.update(
+            "INSERT INTO tickets (title, description, status, priority, reporter_id, project_id, create_time, version) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "Recent Ticket", 
+            "Created 5 days ago", 
+            "OPEN", 
+            "MEDIUM", 
+            user1.getId(),
+            project1.getId(),
+            java.sql.Timestamp.from(fiveDaysAgo.toInstant()),
+            0L // WORKAROUND - Explicitly set version
+        );
+        
+        // Test our JPA query using the repository
+        List<Ticket> olderTickets = ticketRepository.findTicketsCreatedBetween(
+            now.minusDays(15), now.minusDays(7)
+        );
+        
+        assertThat(olderTickets).hasSize(1);
+        assertThat(olderTickets.get(0).getTitle()).isEqualTo("Old Ticket");
+    }
+
     @Test
     public void testTimeZoneHandling() {
         // Create tickets with due dates in different timezones
-        ZonedDateTime utcTime = baseTime.withZoneSameInstant(ZoneId.of("UTC"));
-        ZonedDateTime nyTime = baseTime.withZoneSameInstant(ZoneId.of("America/New_York"));
+        // Use baseTime + 1 day to ensure constraint satisfaction
+        ZonedDateTime utcTime = baseTime.plusDays(1).withZoneSameInstant(ZoneId.of("UTC"));
+        ZonedDateTime nyTime = baseTime.plusDays(1).withZoneSameInstant(ZoneId.of("America/New_York"));
         
         Ticket utcTicket = new Ticket("UTC Ticket", "Using UTC timezone", user1, project1);
         utcTicket.setDueDate(utcTime);
@@ -234,14 +359,29 @@ public class TicketTemporalFeaturesPostgresTests extends TimeBasedTest {
         Ticket foundUtcTicket = ticketRepository.findById(utcTicket.getId()).orElseThrow();
         Ticket foundNyTicket = ticketRepository.findById(nyTicket.getId()).orElseThrow();
         
-        // Both should have the same instant value, even if they were created from different timezone representations
+        // Both should have the same instant value
         assertThat(foundUtcTicket.getDueDate().toInstant()).isEqualTo(foundNyTicket.getDueDate().toInstant());
         
-        // When accessed in Java, the timezone information might be normalized
         System.out.println("UTC ticket due date: " + foundUtcTicket.getDueDate());
         System.out.println("NY ticket due date: " + foundNyTicket.getDueDate());
+        
+        // Test timezone-aware queries (both PostgreSQL and CockroachDB should support this)
+        try {
+            List<Ticket> ticketsDueTodayUTC = ticketRepository.findTicketsDueTodayInTimezone("UTC");
+            System.out.println("Tickets due today in UTC: " + ticketsDueTodayUTC.size());
+            
+            List<Ticket> ticketsDueTodayNY = ticketRepository.findTicketsDueTodayInTimezone("America/New_York");
+            System.out.println("Tickets due today in NY: " + ticketsDueTodayNY.size());
+        } catch (Exception e) {
+            // Log the exception - some features might not be supported
+            System.out.println("Timezone-aware query not supported: " + e.getMessage());
+        }
     }
 
-
+    @Test
+    public void inspectTemporalSchema() {
+        // Inspect the schema to verify temporal column types
+        schemaInspector.inspectTableSchema("tickets");
+    }
 
 }
