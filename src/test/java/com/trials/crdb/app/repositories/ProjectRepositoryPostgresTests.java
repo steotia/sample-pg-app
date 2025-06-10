@@ -1,6 +1,8 @@
 package com.trials.crdb.app.repositories;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -95,6 +97,22 @@ public class ProjectRepositoryPostgresTests {
         assertThat(foundInDb.getName()).isEqualTo(projectName);
 
         schemaInspector.inspectTableSchema("projects");
+
+    }
+
+    @Test
+    public void testSequentialIDs(){
+        List<Long> generatedIDs = new ArrayList<>();
+        
+        for(int i = 0;i<5;i++){
+            Project project = new Project("Sequential "+i, "Testing ID generation");
+            entityManager.persist(project);
+            entityManager.flush();
+            generatedIDs.add(project.getId());
+
+        }
+
+        System.out.println("Generated IDs :"+generatedIDs);
 
     }
 

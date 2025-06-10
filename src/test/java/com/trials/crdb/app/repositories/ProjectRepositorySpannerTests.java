@@ -247,4 +247,20 @@ public class ProjectRepositorySpannerTests {
 
         schemaInspector.inspectTableSchema("projects");
     }
+
+    @Test
+    public void testSequentialIDs(){
+        List<Long> generatedIDs = new ArrayList<>();
+        
+        for(int i = 0;i<5;i++){
+            Project project = new Project("Sequential "+i, "Testing ID generation");
+            entityManager.persist(project);
+            entityManager.flush();
+            generatedIDs.add(project.getId());
+
+        }
+
+        System.out.println("Generated IDs :"+generatedIDs);
+
+    }
 }
